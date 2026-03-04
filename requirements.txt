@@ -1,0 +1,3 @@
+PyQt5==5.15.10
+python-dotenv==1.0.1
+pyserial==3.5
