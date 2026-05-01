@@ -1,6 +1,7 @@
 # core/emulator.py
 import re
 from typing import Tuple, Dict, List
+import struct
 
 class RISCV_Emulator:
     """
@@ -218,3 +219,57 @@ class RISCV_Emulator:
         else:
             self.pc += 1
             return "[ WB  ] Ciclo concluído. PC Avança."
+
+
+    def generate_binary_payload(instructions):
+    # instruções: lista de inteiros de 32 bits (ex: [0x00000013, 0x00100093])
+    # '<I' garante o formato Little Endian (padrão RISC-V)
+        return b''.join(struct.pack('<I', instr) for instr in instructions)
+    
+
+    def get_binary_image(self, instructions_list):
+        """
+        Converte uma lista de instruções (ints, strings hex/bin, ou objetos) 
+        em um payload binário Little Endian.
+        """
+        import struct
+        payload = b''
+        
+        for instr in instructions_list:
+            try:
+                val = 0
+                
+                # 1. Se já for um número inteiro
+                if isinstance(instr, int):
+                    val = instr
+                    
+                # 2. Se for um texto (String Hex, Binária ou Decimal)
+                elif isinstance(instr, str):
+                    instr_clean = instr.strip().lower()
+                    if instr_clean.startswith('0x'):
+                        val = int(instr_clean, 16)
+                    elif instr_clean.startswith('0b'):
+                        val = int(instr_clean, 2)
+                    elif len(instr_clean) == 32 and all(c in '01' for c in instr_clean):
+                        val = int(instr_clean, 2) # Binário puro de 32 bits sem '0b'
+                    else:
+                        val = int(instr_clean) # Tenta decimal
+                        
+                # 3. Se for um Objeto criado por você (ex: instâncias de uma classe Instruction)
+                elif hasattr(instr, 'machine_code'):
+                    val = int(instr.machine_code)
+                elif hasattr(instr, 'value'):
+                    val = int(instr.value)
+                    
+                else:
+                    # Tenta converter a força bruta
+                    val = int(instr)
+
+                # Aplica a máscara 0xFFFFFFFF para garantir que cabe em 32-bits unsigned
+                payload += struct.pack('<I', val & 0xFFFFFFFF)
+                
+            except Exception as e:
+                print(f"Erro ao converter instrução '{instr}' (tipo {type(instr)}): {e}")
+                return b'' # Retorna vazio para a GUI avisar do erro
+                
+        return payload

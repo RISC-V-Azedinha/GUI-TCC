@@ -2,7 +2,8 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QPlainTextEdit, QTextEdit, 
                              QFrame, QSplitter, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QAbstractItemView, QStackedWidget)
+                             QHeaderView, QAbstractItemView, QStackedWidget,
+                             QProgressBar) # <-- Adicionado QProgressBar
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QColor, QTextFormat, QTextCursor
 import qtawesome as qta
@@ -17,8 +18,11 @@ from .tiling_widget import TilingWidget
 class RV32IWidget(QWidget):
     """Isolamos o layout do Emulador RV32I em um Widget próprio."""
     request_reset = pyqtSignal(str)
+    request_reset_fpga = pyqtSignal() # <-- Novo sinal para o Reset Sincronizado
     request_step = pyqtSignal()
     request_run_toggle = pyqtSignal()
+    request_upload = pyqtSignal()     # <-- Novo sinal para o Upload
+    request_sync_fpga = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -52,7 +56,8 @@ class RV32IWidget(QWidget):
         self.btn_reset = QPushButton(" Reset")
         self.btn_reset.setIcon(qta.icon('fa5s.sync-alt', color='#f8fafc'))
         self.btn_reset.setProperty("class", "ActionBtn")
-        self.btn_reset.clicked.connect(lambda: self.request_reset.emit(self.editor.toPlainText()))
+        # Dispara o Reset do FPGA e Simulador
+        self.btn_reset.clicked.connect(self.request_reset_fpga.emit) 
         
         self.btn_step = QPushButton(" Step (Clock)")
         self.btn_step.setIcon(qta.icon('fa5s.step-forward', color='#f8fafc'))
@@ -67,11 +72,31 @@ class RV32IWidget(QWidget):
         self.btn_upload = QPushButton(" Upload FPGA")
         self.btn_upload.setIcon(qta.icon('fa5s.cloud-upload-alt', color='white'))
         self.btn_upload.setProperty("class", "ActionBtn SuccessBtn")
+        self.btn_upload.clicked.connect(self.request_upload.emit) # <-- Conectado
+        
+        self.btn_sync = QPushButton(" Sync Hardware")
+        self.btn_sync.setIcon(qta.icon('fa5s.satellite-dish', color='white'))
+        self.btn_sync.setProperty("class", "ActionBtn")
+        self.btn_sync.setStyleSheet("background-color: #6366f1; color: white;") # Um roxinho pra dar destaque
+        self.btn_sync.clicked.connect(self.request_sync_fpga.emit) # <--- CONECTADO
+
+        # --- Barra de Progresso do Upload ---
+        self.progressBar = QProgressBar()
+        self.progressBar.setRange(0, 100)
+        self.progressBar.setValue(0)
+        self.progressBar.setFixedWidth(120)
+        self.progressBar.setFixedHeight(30)
+        self.progressBar.setStyleSheet("""
+            QProgressBar { border: 1px solid #1e293b; border-radius: 4px; text-align: center; color: white; background-color: #0f172a;}
+            QProgressBar::chunk { background-color: #10b981; border-radius: 3px; }
+        """)
         
         toolbar.addWidget(self.btn_reset)
         toolbar.addWidget(self.btn_step)
         toolbar.addWidget(self.btn_run)
         toolbar.addWidget(self.btn_upload)
+        toolbar.addWidget(self.btn_sync)
+        toolbar.addWidget(self.progressBar) # <-- Adicionado a UI
         w_layout.addLayout(toolbar)
         
         main_splitter = QSplitter(Qt.Horizontal)
@@ -242,6 +267,39 @@ class RiscVEduApp(QMainWindow):
         self.setup_sidebar()
         self.setup_main_area()
 
+    # --- PONTES (PROXY) PARA O CONTROLLER ---
+    # Isso permite que o MainController converse com RiscVEduApp 
+    # como se estivesse conversando diretamente com a aba RV32IWidget
+    
+    @property
+    def request_reset(self): return self.rv32i_view.request_reset
+    @property
+    def request_reset_fpga(self): return self.rv32i_view.request_reset_fpga
+    @property
+    def request_step(self): return self.rv32i_view.request_step
+    @property
+    def request_run_toggle(self): return self.rv32i_view.request_run_toggle
+    @property
+    def request_upload(self): return self.rv32i_view.request_upload
+    @property
+    def request_sync_fpga(self): return self.rv32i_view.request_sync_fpga # <--- NOVA PONTE
+    @property
+    def editor(self): return self.rv32i_view.editor
+    @property
+    def progressBar(self): return self.rv32i_view.progressBar
+
+    def log(self, msg: str, color: str = "#cbd5e1"): 
+        self.rv32i_view.log(msg, color)
+    def clear_log(self): 
+        self.rv32i_view.clear_log()
+    def set_run_state(self, is_running: bool): 
+        self.rv32i_view.set_run_state(is_running)
+    def update_hardware_ui(self, regs: list, memory: dict, stage: int): 
+        self.rv32i_view.update_hardware_ui(regs, memory, stage)
+    def highlight_line(self, line_idx: int): 
+        self.rv32i_view.highlight_line(line_idx)
+    # ----------------------------------------
+
     def setup_sidebar(self):
         self.sidebar = QFrame()
         self.sidebar.setObjectName("Sidebar")
@@ -254,7 +312,6 @@ class RiscVEduApp(QMainWindow):
         title.setObjectName("AppTitle")
         layout.addWidget(title)
         
-        # Mapeamento do Botão para a Tela e Índices (Agora com o DMA incluído)
         self.nav_buttons = []
         labs = [
             (" 1. Core RV32I", "fa5s.microchip", True, 0),
@@ -262,7 +319,7 @@ class RiscVEduApp(QMainWindow):
             (" 3. DMA Controller", "fa5s.bolt", True, 2),
             (" 4. NPU Micro-Arch", "fa5s.brain", True, 3),
             (" 5. Tiling & Scaling", "fa5s.layer-group", True, 4), 
-            (" 6. OS Console", "fa5s.terminal", True, 5)           
+            (" 6. OS Console", "fa5s.terminal", True, 5)          
         ]
         
         for name, icon_name, enabled, target_idx in labs:
@@ -327,11 +384,10 @@ class RiscVEduApp(QMainWindow):
         
         layout.addWidget(header)
         
-        # O SISTEMA DE "CARTAS" (QStackedWidget)
         self.stacked_widget = QStackedWidget()
         
         self.rv32i_view = RV32IWidget()
-        self.io_view = IOWidget()                 
+        self.io_view = IOWidget()                
         self.dma_view = DMAWidget()               
         self.npu_view = NPUWidget()
         self.tiling_view = TilingWidget()         
@@ -347,13 +403,10 @@ class RiscVEduApp(QMainWindow):
         layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.main_content)
         
-        # Inicia no Lab 1
         self.switch_lab(0, self.nav_buttons[0])
 
     def switch_lab(self, index, active_btn):
-        # Muda a tela central
         self.stacked_widget.setCurrentIndex(index)
-        # Desmarca todos os botões e marca apenas o clicado
         for btn in self.nav_buttons:
             if btn != active_btn:
                 btn.setChecked(False)
