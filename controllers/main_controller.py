@@ -30,7 +30,7 @@ class MiniAssembler:
 
         # Pass 1: Mapear Labels e limpar o código
         for line in lines:
-            line = line.split('#')[0].strip() # Remove comentários
+            line = line.split('#')[0].strip() 
             if not line or line.startswith('.'): continue
             if ':' in line:
                 label, rest = line.split(':', 1)
@@ -46,19 +46,18 @@ class MiniAssembler:
         machine_code = []
         pc = 0
         for line in clean_lines:
-            # Troca vírgulas e parênteses por espaço para extrair os argumentos limpos
             parts = re.sub(r'[,()]', ' ', line).split()
             op = parts[0]
             args = parts[1:]
 
             # Tratamento de Pseudo-Instruções
-            if op == 'li':   # li rd, imm -> addi rd, x0, imm
+            if op == 'li':   
                 op = 'addi'
                 args = [args[0], 'x0', args[1]]
-            elif op == 'mv': # mv rd, rs -> addi rd, rs, 0
+            elif op == 'mv': 
                 op = 'addi'
                 args = [args[0], args[1], '0']
-            elif op == 'j':  # j offset -> jal x0, offset
+            elif op == 'j':  
                 op = 'jal'
                 args = ['x0', args[0]]
 
@@ -70,22 +69,23 @@ class MiniAssembler:
                 elif op == 'add':
                     rd, rs1, rs2 = cls.REGS[args[0]], cls.REGS[args[1]], cls.REGS[args[2]]
                     instr_bin = (0 << 25) | (rs2 << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | 0x33
-                elif op == 'sw': # sw rs2, imm(rs1)
+                elif op == 'sw': 
                     rs2, imm, rs1 = cls.REGS[args[0]], int(args[1], 0) & 0xFFF, cls.REGS[args[2]]
                     imm11_5 = (imm >> 5) & 0x7F
                     imm4_0 = imm & 0x1F
                     instr_bin = (imm11_5 << 25) | (rs2 << 20) | (rs1 << 15) | (2 << 12) | (imm4_0 << 7) | 0x23
-                elif op == 'lw': # lw rd, imm(rs1)
+                elif op == 'lw': 
                     rd, imm, rs1 = cls.REGS[args[0]], int(args[1], 0) & 0xFFF, cls.REGS[args[2]]
                     instr_bin = (imm << 20) | (rs1 << 15) | (2 << 12) | (rd << 7) | 0x03
-                elif op == 'beq':
+                elif op in ['beq', 'bne']: # <--- ADICIONADO SUPORTE A BNE!
                     rs1, rs2 = cls.REGS[args[0]], cls.REGS[args[1]]
                     offset = (labels[args[2]] - pc) & 0x1FFF
                     imm12 = (offset >> 12) & 1
                     imm11_5 = (offset >> 5) & 0x3F
                     imm4_1 = (offset >> 1) & 0xF
                     imm11 = (offset >> 11) & 1
-                    instr_bin = (imm12 << 31) | (imm11_5 << 25) | (rs2 << 20) | (rs1 << 15) | (0 << 12) | (imm4_1 << 8) | (imm11 << 7) | 0x63
+                    funct3 = 0 if op == 'beq' else 1
+                    instr_bin = (imm12 << 31) | (imm11_5 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (imm4_1 << 8) | (imm11 << 7) | 0x63
                 elif op == 'jal':
                     rd = cls.REGS[args[0]]
                     offset = (labels[args[1]] - pc) & 0xFFFFF
@@ -94,10 +94,14 @@ class MiniAssembler:
                     imm11 = (offset >> 11) & 1
                     imm10_1 = (offset >> 1) & 0x3FF
                     instr_bin = (imm20 << 31) | (imm10_1 << 21) | (imm11 << 20) | (imm19_12 << 12) | (rd << 7) | 0x6f
+                elif op == 'lui': # <--- ADICIONADA INSTRUÇÃO LUI!
+                    rd, imm = cls.REGS[args[0]], int(args[1], 0) & 0xFFFFF
+                    instr_bin = (imm << 12) | (rd << 7) | 0x37
                 elif op == 'wfi':
                     instr_bin = 0x10500073
                 else:
-                    return [] # Falha, instrução não reconhecida
+                    print(f"Instrução {op} não reconhecida.")
+                    return [] 
             except Exception as e:
                 print(f"Erro na linha '{line}': {e}")
                 return []
