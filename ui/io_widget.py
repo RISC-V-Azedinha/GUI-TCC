@@ -163,6 +163,7 @@ class IOWidget(QWidget):
         code_layout.addWidget(lbl_code)
         
         self.editor = CodeEditor()
+        self.editor.document().setDocumentMargin(15)
         self.highlighter = CHighlighter(self.editor.document())
         default_code = """// Memory Map Definitions
 #define SWITCHES_BASE 0x80001000 // 16-bit

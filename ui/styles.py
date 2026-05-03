@@ -63,13 +63,21 @@ QPlainTextEdit, QTextEdit {
     font-size: 14px;
     border: 1px solid #2A2F3A;
     border-radius: 4px; /* Raio bem sutil, menos agressivo que 0px e 8px */
-    padding: 10px;
+    padding: 0 px;
 }
 
 QTextEdit#TerminalOutput { 
     color: #5DB373; /* Verde terminal clássico */
     font-size: 13px;
     line-height: 1.5;
+}
+
+/* ================== SPLITTER ================== */
+
+/* Espaçamento entre o Editor e as Tabelas */
+QSplitter::handle:horizontal {
+    background-color: transparent; /* Mantém o fundo limpo */
+    width: 60px; /* Define o tamanho do 'gap' (ajuste conforme preferir) */
 }
 
 /* ================== TABELAS (RegFile e RAM) ================== */
@@ -180,7 +188,8 @@ QLabel.PipelineStageActive {
 QScrollBar:vertical {
     border: none;
     background: #0B0D12;
-    width: 12px; /* Deixei um pouco mais largo para destacar o formato retangular */
+    border-left: 1px solid #2A2F3A;
+    width: 13px; /* Deixei um pouco mais largo para destacar o formato retangular */
     margin: 0px;
 }
 QScrollBar::handle:vertical {
@@ -194,6 +203,7 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { 
     border: none; 
     background: none; 
+    height: 0px;
 }
 
 QScrollBar:horizontal {
@@ -213,5 +223,6 @@ QScrollBar::handle:horizontal:hover {
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { 
     border: none; 
     background: none; 
+    width: 0px;
 }
 """

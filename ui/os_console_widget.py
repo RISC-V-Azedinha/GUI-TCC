@@ -87,6 +87,7 @@ class OSConsoleWidget(QWidget):
 
         # Página 1: Consola Real
         self.console_output = QTextEdit()
+        self.console_output.document().setDocumentMargin(15)
         self.console_output.setReadOnly(True)
         self.console_output.setStyleSheet("""
             QTextEdit {

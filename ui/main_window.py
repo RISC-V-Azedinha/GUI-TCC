@@ -100,6 +100,7 @@ class RV32IWidget(QWidget):
         w_layout.addLayout(toolbar)
         
         main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setHandleWidth(25)
         
         editor_widget = QWidget()
         editor_layout = QVBoxLayout(editor_widget)
@@ -109,6 +110,7 @@ class RV32IWidget(QWidget):
         editor_layout.addWidget(editor_label)
         
         self.editor = QPlainTextEdit()
+        self.editor.setViewportMargins(15, 0, 0, 0)
         self.highlighter = RISCVHighlighter(self.editor.document())
         code = """# RISC-V Assembly - Fibonacci salvando em Memoria\n.global _start\n\n_start:\n    li t0, 0\n    li t1, 1\n    li t2, 10\n    li t3, 0\n    li t5, 0\n\nfib_loop:\n    beq t3, t2, end\n    sw t0, 0(t5)\n    add t4, t0, t1\n    mv t0, t1\n    mv t1, t4\n    addi t3, t3, 1\n    addi t5, t5, 4\n    j fib_loop\n\nend:\n    wfi"""
         self.editor.setPlainText(code)
@@ -180,6 +182,7 @@ class RV32IWidget(QWidget):
         
         self.console = QTextEdit()
         self.console.setObjectName("TerminalOutput")
+        self.console.setViewportMargins(15, 0, 0, 0)
         self.console.setReadOnly(True)
         self.console.setFixedHeight(140)
         self.console.append(">> Ambiente Emulador Multiciclo Inicializado com Sucesso.")
