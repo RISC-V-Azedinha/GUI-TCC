@@ -37,7 +37,7 @@ class RV32IWidget(QWidget):
         toolbar.addStretch()
         
         pipeline_frame = QFrame()
-        pipeline_frame.setStyleSheet("background-color: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 4px;")
+        pipeline_frame.setStyleSheet("background-color: #0B0D12; border: 1px solid #2A2F3A; border-radius: 4px; padding: 4px;")
         pipe_layout = QHBoxLayout(pipeline_frame)
         pipe_layout.setContentsMargins(4, 4, 4, 4)
         pipe_layout.setSpacing(4)
@@ -167,8 +167,13 @@ class RV32IWidget(QWidget):
         
         main_splitter.addWidget(editor_widget)
         main_splitter.addWidget(hw_splitter)
-        main_splitter.setStretchFactor(0, 4) 
-        main_splitter.setStretchFactor(1, 6) 
+        
+        # Força uma proporção inicial em pixels (ex: 800px pro código, 350px pras tabelas)
+        main_splitter.setSizes([800, 350]) 
+
+        # Diz ao Qt que, se a tela for redimensionada, o código cresce mais que as tabelas (Proporção 7 pra 3)
+        main_splitter.setStretchFactor(0, 7) 
+        main_splitter.setStretchFactor(1, 3)
         
         w_layout.addWidget(main_splitter, 1) 
         
@@ -364,23 +369,35 @@ class RiscVEduApp(QMainWindow):
         h_layout.setContentsMargins(30, 0, 30, 0)
         
         term_icon = QLabel()
-        term_icon.setPixmap(qta.icon('fa5s.plug', color='#94a3b8').pixmap(16, 16))
+        term_icon.setPixmap(qta.icon('fa5s.plug', color='#8B9BB4').pixmap(16, 16))
         h_layout.addWidget(term_icon)
         
         term_info = QLabel("/dev/ttyUSB0 @ 115200 baud")
-        term_info.setStyleSheet("color: #94a3b8; font-family: monospace; font-weight: 600;")
+        term_info.setStyleSheet("color: #8B9BB4; font-family: monospace; font-weight: bold;")
         h_layout.addWidget(term_info)
         h_layout.addStretch()
         
-        btn_log_capture = QPushButton(" Log Capture")
-        btn_log_capture.setIcon(qta.icon('fa5s.save', color='#94a3b8'))
-        btn_log_capture.setProperty("class", "GhostBtn")
-        h_layout.addWidget(btn_log_capture)
+        # --- NOVOS BOTÕES DO CABEÇALHO ---
         
-        btn_config = QPushButton(" Config")
-        btn_config.setIcon(qta.icon('fa5s.cog', color='#94a3b8'))
-        btn_config.setProperty("class", "GhostBtn")
-        h_layout.addWidget(btn_config)
+        # Botão Save
+        self.btn_save = QPushButton(" Save")
+        self.btn_save.setIcon(qta.icon('fa5s.save', color='#8B9BB4'))
+        self.btn_save.setProperty("class", "GhostBtn")
+        h_layout.addWidget(self.btn_save)
+        
+        # Botão Load (Ícone de pasta aberta)
+        self.btn_load = QPushButton(" Load")
+        self.btn_load.setIcon(qta.icon('fa5s.folder-open', color='#8B9BB4'))
+        self.btn_load.setProperty("class", "GhostBtn")
+        h_layout.addWidget(self.btn_load)
+        
+        # Botão Config
+        self.btn_config = QPushButton(" Config")
+        self.btn_config.setIcon(qta.icon('fa5s.cog', color='#8B9BB4'))
+        self.btn_config.setProperty("class", "GhostBtn")
+        h_layout.addWidget(self.btn_config)
+        
+        # ---------------------------------
         
         layout.addWidget(header)
         
