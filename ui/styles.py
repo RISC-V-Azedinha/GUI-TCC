@@ -180,27 +180,38 @@ QLabel.PipelineStageActive {
 QScrollBar:vertical {
     border: none;
     background: #0B0D12;
-    width: 10px;
+    width: 12px; /* Deixei um pouco mais largo para destacar o formato retangular */
     margin: 0px;
 }
 QScrollBar::handle:vertical {
-    background: #2A2F3A; /* Discreto até o hover */
+    background: #F2B845; /* Mostarda (Laranja Amarelado) */
     min-height: 20px;
-    border-radius: 5px;
+    border-radius: 0px; /* Zera o arredondamento, deixando perfeitamente retangular */
 }
-QScrollBar::handle:vertical:hover { background: #6CA1A2; } /* Brilha em Teal ao passar o mouse */
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; }
+QScrollBar::handle:vertical:hover { 
+    background: #DC673E; /* Muda para o Laranja do botão Run ao passar o mouse */
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { 
+    border: none; 
+    background: none; 
+}
+
 QScrollBar:horizontal {
     border: none;
     background: #0B0D12;
-    height: 10px;
+    height: 12px;
     margin: 0px;
 }
 QScrollBar::handle:horizontal {
-    background: #2A2F3A;
+    background: #F2B845;
     min-width: 20px;
-    border-radius: 5px;
+    border-radius: 0px;
 }
-QScrollBar::handle:horizontal:hover { background: #6CA1A2; }
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { border: none; background: none; }
+QScrollBar::handle:horizontal:hover { 
+    background: #DC673E; 
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { 
+    border: none; 
+    background: none; 
+}
 """

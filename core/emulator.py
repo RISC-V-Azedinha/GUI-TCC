@@ -10,7 +10,7 @@ class RISCV_Emulator:
     """
     def __init__(self) -> None:
         self.regs: List[int] = [0] * 32
-        self.memory: Dict[int, int] = {i: 0 for i in range(0, 256, 4)} 
+        self.memory: Dict[int, int] = {}
         self.pc: int = 0
         self.stage: int = 0
         
@@ -195,12 +195,17 @@ class RISCV_Emulator:
 
     def stage_memory(self) -> str:
         if self.op == 'lw':
-            self.MDR = self.memory.get(self.ALUOut, 0)
+            # Se o endereço for lido antes de ser escrito, registramos ele na RAM com valor 0
+            if self.ALUOut not in self.memory:
+                self.memory[self.ALUOut] = 0
+            
+            self.MDR = self.memory[self.ALUOut]
             return f"[ MEM ] Leu Memória: Mem[{self.ALUOut}] = {self.MDR}"
+            
         elif self.op == 'sw':
             self.memory[self.ALUOut] = self.B
             self.pc += 1
-            return f"[ MEM ] Escreveu Memória: Mem[{self.ALUOut}] <- {self.B}. PC Avança."
+            return f"[ MEM ] Escreveu Memória: Mem[{self.ALUOut}] <- {self.B}. PC Avançou"
         else:
             return "[ MEM ] Sem acesso à memória neste ciclo."
 

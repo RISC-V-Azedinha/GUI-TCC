@@ -146,18 +146,15 @@ class RV32IWidget(QWidget):
         mem_title.setStyleSheet("font-weight:700; color:#94a3b8; margin-bottom: 5px; margin-top: 10px;")
         mem_layout.addWidget(mem_title)
         
-        self.mem_table = QTableWidget(64, 2)
+        # Inicializa a tabela vazia (0 linhas, 2 colunas)
+        self.mem_table = QTableWidget(0, 2)
         self.mem_table.setHorizontalHeaderLabels(["Endereço", "Valor"])
         self.mem_table.verticalHeader().setVisible(False)
         self.mem_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.mem_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.mem_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
-        for i in range(64):
-            addr_hex = f"0x{(i*4):04X}"
-            self.mem_table.setItem(i, 0, self._create_item(addr_hex, "#94a3b8"))
-            self.mem_table.setItem(i, 1, self._create_item("0", "#3b82f6"))
-            
+        # O loop 'for' foi removido para a RAM começar limpa
         mem_layout.addWidget(self.mem_table)
         
         hw_splitter.addWidget(reg_widget)
@@ -210,6 +207,32 @@ class RV32IWidget(QWidget):
             self.btn_run.setText(" Run")
             self.btn_run.setIcon(qta.icon('fa5s.play', color='white'))
 
+    def update_memory_view(self, address: int, value: int):
+        """Atualiza ou insere um endereço na tabela de RAM dinamicamente."""
+        
+        # Formata o endereço para Hex com 8 dígitos (ex: 0x00000010)
+        addr_hex = f"0x{address:08X}" 
+        
+        # 1. Verifica se o endereço já existe na tabela
+        for row in range(self.mem_table.rowCount()):
+            item = self.mem_table.item(row, 0)
+            if item and item.text() == addr_hex:
+                # Atualiza o valor do endereço existente
+                self.mem_table.item(row, 1).setText(str(value))
+                return
+
+        # 2. Se o endereço não existe, insere uma nova linha
+        row_idx = self.mem_table.rowCount()
+        self.mem_table.insertRow(row_idx)
+        
+        # Utiliza o seu método _create_item com as cores do novo tema
+        # Branco/Gelo (#F3F3F3) para o endereço e Teal (#6CA1A2) para o valor
+        self.mem_table.setItem(row_idx, 0, self._create_item(addr_hex, "#F3F3F3"))
+        self.mem_table.setItem(row_idx, 1, self._create_item(str(value), "#6CA1A2"))
+        
+        # 3. Ordena a tabela pela primeira coluna (Endereço) em ordem crescente
+        self.mem_table.sortItems(0, Qt.AscendingOrder)
+
     def update_hardware_ui(self, regs: list, memory: dict, stage: int):
         for i, lbl in enumerate(self.stage_labels):
             if i == stage:
@@ -230,17 +253,33 @@ class RV32IWidget(QWidget):
                 item.setBackground(QColor("transparent"))
                 item.setForeground(QColor("#3b82f6"))
                 
-        for i in range(64):
-            addr = i * 4
-            current_val = memory.get(addr, 0)
-            item = self.mem_table.item(i, 1)
-            if int(item.text()) != current_val:
-                item.setText(str(current_val))
-                item.setBackground(QColor("#064e3b")) 
-                item.setForeground(QColor("#6ee7b7")) 
-            else:
-                item.setBackground(QColor("transparent"))
-                item.setForeground(QColor("#3b82f6"))
+        # =======================================================
+        # ATUALIZAÇÃO DINÂMICA DA MEMÓRIA RAM
+        # =======================================================
+        
+        # 1. Atualiza as linhas que já existem na tabela visualmente
+        for row in range(self.mem_table.rowCount()):
+            addr_item = self.mem_table.item(row, 0)
+            val_item = self.mem_table.item(row, 1)
+            
+            if addr_item and val_item:
+                # Converte o "0x00000000" da tabela de volta para int
+                addr = int(addr_item.text(), 16)
+                current_val = memory.get(addr, 0)
+                
+                # Se o valor mudou neste ciclo de clock
+                if int(val_item.text()) != current_val:
+                    val_item.setText(str(current_val))
+                    val_item.setBackground(QColor("#2A2F3A")) # Fundo de destaque
+                    val_item.setForeground(QColor("#DC673E")) # Texto Laranja
+                else:
+                    val_item.setBackground(QColor("transparent"))
+                    val_item.setForeground(QColor("#6CA1A2")) # Texto Teal (Estável)
+
+        # 2. Garante que novos endereços gravados na memória do modelo 
+        # (que ainda não ganharam uma linha na interface) sejam criados.
+        for addr, val in memory.items():
+            self.update_memory_view(addr, val)
 
     def highlight_line(self, line_idx: int):
         extra_selections = []
