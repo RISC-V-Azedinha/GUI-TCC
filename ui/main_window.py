@@ -486,7 +486,7 @@ class RiscVEduApp(QMainWindow):
         self.btn_guide.setProperty("class", "GhostBtn")
         
         # Conecta a uma nova função que vamos criar
-        self.btn_guide.clicked.connect(self.open_pdf_guide)
+        self.btn_guide.clicked.connect(self.open_guide)
         
         h_layout.addWidget(self.btn_guide)
         
@@ -515,16 +515,14 @@ class RiscVEduApp(QMainWindow):
         
         self.switch_lab(0, self.nav_buttons[0])
 
-    def open_pdf_guide(self):
-        # Procura um arquivo chamado "Roteiro_Labs.pdf" na raiz do projeto
-        pdf_path = os.path.abspath("Roteiro_Labs.pdf")
+    def open_guide(self):
+        url = QUrl("https://risc-v-azedinha.github.io/RISC-V/")
         
-        if os.path.exists(pdf_path):
-            # QDesktopServices.openUrl chama o leitor padrão do Windows/Linux/Mac
-            QDesktopServices.openUrl(QUrl.fromLocalFile(pdf_path))
-        else:
-            # Se não achar o PDF, joga um aviso no terminal do emulador
-            self.log(f"[ERRO] O arquivo '{pdf_path}' não foi encontrado.", "#ef4444")
+        if not url.isValid():
+            self.log("[ERRO] URL inválida.", "#ef4444")
+            return
+
+        QDesktopServices.openUrl(url)
 
     def switch_lab(self, index, active_btn):
         self.stacked_widget.setCurrentIndex(index)
