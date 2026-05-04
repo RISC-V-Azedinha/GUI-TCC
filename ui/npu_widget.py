@@ -173,7 +173,7 @@ class NPUWidget(QWidget):
 
         self.btn_run = QPushButton(" Auto Run")
         self.btn_run.setIcon(qta.icon('fa5s.play', color=TEXT_PRIMARY))
-        self.btn_run.setProperty("class", "ActionBtn PrimaryBtn")
+        self.btn_run.setStyleSheet(f"background-color: #3b82f6; color: white; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
         self.btn_run.clicked.connect(self.request_run.emit)
         
         header.addWidget(self.btn_reset)
@@ -204,12 +204,14 @@ class NPUWidget(QWidget):
         col_right.setSpacing(20) # Espaço entre Output e PPU
         
         frame_output, self.panel_output = self._create_panel("OUTPUT MEMORY (C)")
-        frame_output.setFixedWidth(280)  
+        frame_output.setFixedWidth(280)
         self.grid_output = QGridLayout(self.panel_output)
+        self.grid_output.setContentsMargins(0, 0, 0, 0) # <--- ADICIONE ESTA LINHA
         
         frame_ppu, self.panel_ppu = self._create_panel("PPU PIPELINE")
-        frame_ppu.setFixedWidth(280)     
+        frame_ppu.setFixedWidth(280)
         ppu_layout = QVBoxLayout(self.panel_ppu)
+        ppu_layout.setContentsMargins(0, 0, 0, 0)
         
         self.ppu_bias = PPUToggle("Add Bias (+5)", active=False)
         self.ppu_relu = PPUToggle("ReLU Activation", active=True)
