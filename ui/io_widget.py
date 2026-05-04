@@ -158,9 +158,15 @@ class IOWidget(QWidget):
         code_layout = QVBoxLayout(code_frame)
         code_layout.setContentsMargins(15, 15, 15, 15)
         
+        code_header_layout = QHBoxLayout()
+        icon_code = QLabel()
+        icon_code.setPixmap(qta.icon('fa5s.code', color='#F2B845').pixmap(16, 16))
         lbl_code = QLabel("DRIVER IMPLEMENTATION (C CODE)")
         lbl_code.setProperty("class", "IOSectionTitle")
-        code_layout.addWidget(lbl_code)
+        code_header_layout.addWidget(icon_code)
+        code_header_layout.addWidget(lbl_code)
+        code_header_layout.addStretch()
+        code_layout.addLayout(code_header_layout)
         
         self.editor = CodeEditor()
         self.editor.document().setDocumentMargin(15)
@@ -222,12 +228,27 @@ void main() {
         map_layout.setAlignment(Qt.AlignTop) 
         map_layout.setContentsMargins(15, 15, 15, 15)
         
+        # --- NOVO CABEÇALHO COM ÍCONE COLORIDO ---
+        map_header_layout = QHBoxLayout()
+        icon_map = QLabel()
+        icon_map.setPixmap(qta.icon('fa5s.microchip', color='#6CA1A2').pixmap(16, 16))
         lbl_map = QLabel("SOC MEMORY MAP")
         lbl_map.setProperty("class", "IOSectionTitle")
-        map_layout.addWidget(lbl_map)
+        map_header_layout.addWidget(icon_map)
+        map_header_layout.addWidget(lbl_map)
+        map_header_layout.addStretch()
+        map_layout.addLayout(map_header_layout)
+        # -----------------------------------------
         
         self.mem_table = QTableWidget(4, 3)
         self.mem_table.setObjectName("IOMemoryTable")
+        
+        # FORÇANDO O ESTILO MODERNO NA TABELA
+        self.mem_table.setStyleSheet("""
+            QTableWidget { border: none; background-color: transparent; }
+            QHeaderView::section { background-color: transparent; color: #6CA1A2; border: none; border-bottom: 2px solid #6CA1A2; font-size: 12px; font-weight: bold; padding: 4px; }
+            QTableWidget::item { border-bottom: 1px solid #1A1D24; }
+        """)
         self.mem_table.setHorizontalHeaderLabels(["Address", "Name", "Type"])
         self.mem_table.verticalHeader().setVisible(False)
         self.mem_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -261,9 +282,17 @@ void main() {
         f_layout = QVBoxLayout(fpga_panel)
         f_layout.setContentsMargins(20, 20, 20, 40)
         
+        # --- NOVO CABEÇALHO COM ÍCONE COLORIDO ---
+        fpga_header_layout = QHBoxLayout()
+        icon_fpga = QLabel()
+        icon_fpga.setPixmap(qta.icon('fa5s.plug', color='#5DB373').pixmap(16, 16))
         lbl_fpga = QLabel("FPGA BOARD VIEW")
         lbl_fpga.setProperty("class", "IOSectionTitle")
-        f_layout.addWidget(lbl_fpga)
+        fpga_header_layout.addWidget(icon_fpga)
+        fpga_header_layout.addWidget(lbl_fpga)
+        fpga_header_layout.addStretch()
+        f_layout.addLayout(fpga_header_layout)
+        # -----------------------------------------
         
         f_layout.addStretch()
         
