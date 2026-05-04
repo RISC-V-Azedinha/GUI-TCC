@@ -7,14 +7,22 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRegExp
 from PyQt5.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 import qtawesome as qta
 
+# Cores dinâmicas (Trazendo o aspecto de Hardware físico de volta)
+PALETTE_HANDLE_OFF = "#475569"     # Slate Grey: Destaca a chave física contra o trilho escuro
+PALETTE_HANDLE_ON = "#DC673E"      # Laranja Ativo
+PALETTE_LED_OFF_BG = "#2E1114"     # Vermelho bem escuro (LED apagado)
+PALETTE_LED_OFF_BORDER = "#4A1D24" # Borda do LED apagado
+PALETTE_LED_ON_BG = "#DC673E"      
+PALETTE_LED_ON_BORDER = "#F2B845"
+
+
 # =====================================================================
 # EDITOR COM SUPORTE A TAB = 4 ESPAÇOS
 # =====================================================================
 class CodeEditor(QPlainTextEdit):
-    """Editor de texto costumizado para interceptar o comportamento do TAB."""
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Tab:
-            self.insertPlainText("    ") # Insere 4 espaços em vez de \t
+            self.insertPlainText("    ")
             return
         super().keyPressEvent(event)
 
@@ -26,28 +34,24 @@ class CHighlighter(QSyntaxHighlighter):
         super().__init__(document)
         self.rules = []
         
-        # Palavras-chave
         keyword_fmt = QTextCharFormat()
-        keyword_fmt.setForeground(QColor("#60a5fa"))
+        keyword_fmt.setForeground(QColor("#6CA1A2")) # Teal
         keyword_fmt.setFontWeight(QFont.Bold)
         keywords = [r"\bvoid\b", r"\bint\b", r"\bvolatile\b", r"\bwhile\b", r"\bif\b", r"\belse\b"]
         for k in keywords:
             self.rules.append((QRegExp(k), keyword_fmt))
             
-        # Macros
         macro_fmt = QTextCharFormat()
-        macro_fmt.setForeground(QColor("#c084fc"))
+        macro_fmt.setForeground(QColor("#F2B845")) # Mostarda
         self.rules.append((QRegExp(r"#define\b"), macro_fmt))
         
-        # Números
         number_fmt = QTextCharFormat()
-        number_fmt.setForeground(QColor("#a7f3d0"))
+        number_fmt.setForeground(QColor("#5DB373")) # Verde
         self.rules.append((QRegExp(r"\b0x[0-9a-fA-F_]+\b"), number_fmt))
         self.rules.append((QRegExp(r"\b[0-9]+\b"), number_fmt))
         
-        # Comentários
         comment_fmt = QTextCharFormat()
-        comment_fmt.setForeground(QColor("#64748b"))
+        comment_fmt.setForeground(QColor("#8B9BB4"))
         comment_fmt.setFontItalic(True)
         self.rules.append((QRegExp(r"//[^\n]*"), comment_fmt))
 
@@ -64,7 +68,6 @@ class CHighlighter(QSyntaxHighlighter):
 # COMPONENTES DE HARDWARE VISUAL (SW e LED)
 # =====================================================================
 class SwitchWidget(QWidget):
-    """Interruptor deslizante da FPGA."""
     toggled = pyqtSignal(bool)
     
     def __init__(self, index):
@@ -78,18 +81,16 @@ class SwitchWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         
         self.track = QFrame()
-        self.track.setStyleSheet("background-color: #1e293b; border: 2px solid #0f172a; border-radius: 4px;")
+        self.track.setObjectName("IOSwitchTrack")
         t_layout = QVBoxLayout(self.track)
         t_layout.setContentsMargins(2, 2, 2, 2)
         
         self.handle = QFrame()
         self.handle.setFixedHeight(20)
-        self.handle.setStyleSheet("background-color: #334155; border-radius: 2px;")
         
-        # Adiciona no topo (desligado)
         t_layout.addWidget(self.handle, alignment=Qt.AlignBottom)
-        
         layout.addWidget(self.track)
+        self._update_ui()
         
     def mousePressEvent(self, event):
         self.state = not self.state
@@ -101,14 +102,13 @@ class SwitchWidget(QWidget):
         t_layout = self.track.layout()
         t_layout.removeWidget(self.handle)
         if self.state:
-            self.handle.setStyleSheet("background-color: #f59e0b; border-radius: 2px;") # Laranja quando ON
+            self.handle.setStyleSheet(f"background-color: {PALETTE_HANDLE_ON}; border-radius: 2px;")
             t_layout.addWidget(self.handle, alignment=Qt.AlignTop)
         else:
-            self.handle.setStyleSheet("background-color: #334155; border-radius: 2px;")
+            self.handle.setStyleSheet(f"background-color: {PALETTE_HANDLE_OFF}; border-radius: 2px;")
             t_layout.addWidget(self.handle, alignment=Qt.AlignBottom)
 
 class LEDWidget(QFrame):
-    """LED vermelho da FPGA."""
     def __init__(self):
         super().__init__()
         self.setFixedSize(16, 16)
@@ -116,9 +116,9 @@ class LEDWidget(QFrame):
         
     def set_state(self, is_on):
         if is_on:
-            self.setStyleSheet("background-color: #ef4444; border-radius: 8px; border: 1px solid #fca5a5;")
+            self.setStyleSheet(f"background-color: {PALETTE_LED_ON_BG}; border-radius: 8px; border: 1px solid {PALETTE_LED_ON_BORDER};")
         else:
-            self.setStyleSheet("background-color: #450a0a; border-radius: 8px; border: 1px solid #7f1d1d;")
+            self.setStyleSheet(f"background-color: {PALETTE_LED_OFF_BG}; border-radius: 8px; border: 1px solid {PALETTE_LED_OFF_BORDER};")
 
 # =====================================================================
 # PAINEL PRINCIPAL DO LABORATÓRIO I/O
@@ -130,15 +130,16 @@ class IOWidget(QWidget):
         main_layout.setContentsMargins(30, 20, 30, 30)
         main_layout.setSpacing(20)
 
-        # Barra Superior de Toggle
+        # Barra Superior
         top_bar = QHBoxLayout()
         lbl_mode = QLabel("🔌 Mode:  ")
-        lbl_mode.setStyleSheet("color: #94a3b8; font-weight: bold; font-size: 14px;")
+        lbl_mode.setObjectName("IOModeLabel")
         
         self.btn_sim = QPushButton("SIM")
-        self.btn_sim.setStyleSheet("background-color: #0891b2; color: white; font-weight: bold; border-radius: 4px; padding: 4px 12px;")
+        self.btn_sim.setObjectName("IOSimModeBtn")
+        
         self.btn_hw = QPushButton("HARDWARE")
-        self.btn_hw.setStyleSheet("background-color: transparent; color: #64748b; font-weight: bold; border-radius: 4px; padding: 4px 12px;")
+        self.btn_hw.setObjectName("IOHwModeBtn")
         
         top_bar.addWidget(lbl_mode)
         top_bar.addWidget(self.btn_sim)
@@ -146,7 +147,6 @@ class IOWidget(QWidget):
         top_bar.addStretch()
         main_layout.addLayout(top_bar)
 
-        # Layout Principal (50% Código na esquerda, 50% Mapa e FPGA na direita)
         content_layout = QHBoxLayout()
         content_layout.setSpacing(30)
 
@@ -154,12 +154,12 @@ class IOWidget(QWidget):
         # LADO ESQUERDO: EDITOR DE CÓDIGO
         # -----------------------------------------------------
         code_frame = QFrame()
-        code_frame.setStyleSheet("background-color: #0b1120; border: 1px solid #1e293b; border-radius: 8px;")
+        code_frame.setObjectName("IOCodePanel")
         code_layout = QVBoxLayout(code_frame)
         code_layout.setContentsMargins(15, 15, 15, 15)
         
         lbl_code = QLabel("DRIVER IMPLEMENTATION (C CODE)")
-        lbl_code.setStyleSheet("color: #94a3b8; font-weight: bold; font-size: 12px; border: none; margin-bottom: 5px;")
+        lbl_code.setProperty("class", "IOSectionTitle")
         code_layout.addWidget(lbl_code)
         
         self.editor = CodeEditor()
@@ -178,7 +178,7 @@ void main() {
         // Lemos os 16 Switches
         int sw_val = *sw_ptr;
         
-        // Pega os 8 bits altos (SW15-SW8) e move para a direita (atenção aos parênteses!)
+        // Pega os 8 bits altos (SW15-SW8)
         int high_byte = (sw_val & 0xFF00) >> 8;
         
         // Pega os 8 bits baixos (SW7-SW0)
@@ -191,15 +191,16 @@ void main() {
         self.editor.setPlainText(default_code)
         code_layout.addWidget(self.editor)
         
-        # Botões de Acção do Código
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         
-        self.btn_run_sim = QPushButton(" ▶ Run Simulation")
+        self.btn_run_sim = QPushButton(" Run Simulation")
+        self.btn_run_sim.setIcon(qta.icon('fa5s.play', color='#12141A')) # Ícone escuro para contrastar com o fundo
         self.btn_run_sim.setProperty("class", "ActionBtn PrimaryBtn")
         self.btn_run_sim.clicked.connect(self.toggle_simulation)
         
-        self.btn_upload = QPushButton(" ☁ Upload to FPGA")
+        self.btn_upload = QPushButton(" Upload to FPGA")
+        self.btn_upload.setIcon(qta.icon('fa5s.cloud-upload-alt', color='#E2E8F0'))
         self.btn_upload.setProperty("class", "ActionBtn")
         
         btn_layout.addWidget(self.btn_run_sim)
@@ -214,18 +215,19 @@ void main() {
         right_panel = QVBoxLayout()
         right_panel.setSpacing(20)
 
-        # Mapa de Memória (Topo)
+        # Mapa de Memória
         map_frame = QFrame()
-        map_frame.setStyleSheet("background-color: #0b1120; border: 1px solid #1e293b; border-radius: 8px;")
+        map_frame.setObjectName("IOMapPanel")
         map_layout = QVBoxLayout(map_frame)
         map_layout.setAlignment(Qt.AlignTop) 
         map_layout.setContentsMargins(15, 15, 15, 15)
         
         lbl_map = QLabel("SOC MEMORY MAP")
-        lbl_map.setStyleSheet("color: #94a3b8; font-weight: bold; font-size: 12px; border: none; margin-bottom: 5px;")
+        lbl_map.setProperty("class", "IOSectionTitle")
         map_layout.addWidget(lbl_map)
         
         self.mem_table = QTableWidget(4, 3)
+        self.mem_table.setObjectName("IOMemoryTable")
         self.mem_table.setHorizontalHeaderLabels(["Address", "Name", "Type"])
         self.mem_table.verticalHeader().setVisible(False)
         self.mem_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -233,24 +235,6 @@ void main() {
         self.mem_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.mem_table.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.mem_table.horizontalHeader().setFixedHeight(28)
-        self.mem_table.setStyleSheet("""
-            QTableWidget {
-                border: none; 
-                background-color: transparent;
-            }
-            QHeaderView::section {
-                background-color: #0b1120;
-                color: #94a3b8;
-                border: none;
-                border-bottom: 2px solid #1e293b;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 4px;
-            }
-            QTableWidget::item {
-                border-bottom: 1px solid #1e293b;
-            }
-        """)
         
         data = [
             ("0x8000_1000", "GPIO_SW_DATA", "RO"),
@@ -263,23 +247,25 @@ void main() {
             for c, text in enumerate(row_data):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignCenter)
-                item.setForeground(QColor("#cbd5e1" if c != 0 else "#a7f3d0"))
+                # Aplicando cores da paleta oficial baseada na coluna
+                item.setForeground(QColor("#E2E8F0" if c != 0 else "#6CA1A2"))
                 self.mem_table.setItem(r, c, item)
                 
         self.mem_table.setFixedHeight(140)
         map_layout.addWidget(self.mem_table)
-        
         right_panel.addWidget(map_frame, stretch=0)
 
-        # FPGA Board View (Fundo)
+        # FPGA Board View
         fpga_panel = QFrame()
-        fpga_panel.setStyleSheet("background-color: #0b1120; border: 1px solid #1e293b; border-radius: 8px;")
+        fpga_panel.setObjectName("IOBoardPanel")
         f_layout = QVBoxLayout(fpga_panel)
         f_layout.setContentsMargins(20, 20, 20, 40)
         
         lbl_fpga = QLabel("FPGA BOARD VIEW")
-        lbl_fpga.setStyleSheet("color: #94a3b8; font-weight: bold; font-size: 12px; border: none; margin-bottom: 30px;")
+        lbl_fpga.setProperty("class", "IOSectionTitle")
         f_layout.addWidget(lbl_fpga)
+        
+        f_layout.addStretch()
         
         # 7-Segment Displays
         hex_layout = QHBoxLayout()
@@ -289,15 +275,14 @@ void main() {
             lbl_hex = QLabel("0")
             lbl_hex.setFixedSize(40, 55)
             lbl_hex.setAlignment(Qt.AlignCenter)
-            lbl_hex.setStyleSheet("background-color: #020617; border: 2px solid #1e293b; border-radius: 6px; color: #ef4444; font-family: 'Consolas'; font-size: 26px; font-weight: bold;")
+            lbl_hex.setProperty("class", "IOHexDisplay")
             hex_layout.addWidget(lbl_hex)
         f_layout.addLayout(hex_layout)
-        
         f_layout.addSpacing(40)
         
         # LEDs Base
         led_container = QFrame()
-        led_container.setStyleSheet("background-color: #020617; border-radius: 16px; padding: 10px;")
+        led_container.setObjectName("IOLedContainer")
         led_layout = QHBoxLayout(led_container)
         led_layout.setSpacing(8)
         led_layout.setAlignment(Qt.AlignCenter)
@@ -309,7 +294,6 @@ void main() {
             led_layout.addWidget(led)
             
         self.leds.reverse()
-            
         f_layout.addWidget(led_container, alignment=Qt.AlignCenter)
         f_layout.addSpacing(30)
         
@@ -325,24 +309,20 @@ void main() {
             sw = SwitchWidget(i)
             self.switches.append(sw)
             sw_lbl = QLabel(f"SW{i}")
-            sw_lbl.setStyleSheet("color: #64748b; font-size: 8px; font-weight: bold; border: none;")
+            sw_lbl.setProperty("class", "IOSwitchLabel")
             sw_lbl.setAlignment(Qt.AlignCenter)
             sw_container.addWidget(sw, alignment=Qt.AlignCenter)
             sw_container.addWidget(sw_lbl, alignment=Qt.AlignCenter)
             sw_layout.addLayout(sw_container)
             
         self.switches.reverse()
-            
         f_layout.addLayout(sw_layout)
         f_layout.addStretch()
         
         right_panel.addWidget(fpga_panel, stretch=1)
-        
         content_layout.addLayout(right_panel, stretch=1)
-        
         main_layout.addLayout(content_layout)
 
-        # Lógica de Simulação
         self.sim_timer = QTimer()
         self.sim_timer.timeout.connect(self.simulation_step)
         self.is_simulating = False
@@ -350,27 +330,28 @@ void main() {
     def toggle_simulation(self):
         if self.is_simulating:
             self.sim_timer.stop()
-            self.btn_run_sim.setText(" ▶ Run Simulation")
-            self.btn_run_sim.setStyleSheet("")
+            self.btn_run_sim.setText(" Run Simulation")
+            self.btn_run_sim.setIcon(qta.icon('fa5s.play', color='#12141A'))
+            self.btn_run_sim.setProperty("class", "ActionBtn PrimaryBtn")
+            self.btn_run_sim.setStyleSheet("") # Limpa o estilo de Stop
             self.is_simulating = False
         else:
-            self.sim_timer.start(100) # 10 FPS
-            self.btn_run_sim.setText(" ⏹ Stop Simulation")
-            self.btn_run_sim.setStyleSheet("background-color: #ef4444; color: white; border: none;")
+            self.sim_timer.start(100)
+            self.btn_run_sim.setText(" Stop Simulation")
+            self.btn_run_sim.setIcon(qta.icon('fa5s.stop', color='#12141A'))
+            # Sobrescreve visualmente para o estado de emergência/parada
+            self.btn_run_sim.setStyleSheet("background-color: #DC673E; color: #12141A; border: none; font-weight: bold; border-radius: 4px; padding: 6px 16px;") 
             self.is_simulating = True
 
     def simulation_step(self):
-        # 1. Obter o valor atual do Hardware Virtual (SW)
         sw_value = 0
         for i, sw in enumerate(self.switches):
             if sw.state:
                 sw_value |= (1 << i)
                 
-        # 2. Ler o código do editor
         code = self.editor.toPlainText()
         led_value = 0
         
-        # 3. Mini-Transpilador C -> Python (Busca a lógica dentro do while(1))
         loop_match = re.search(r'while\s*\(\s*1\s*\)\s*\{([^}]*)\}', code, re.DOTALL)
         
         if loop_match:
@@ -379,35 +360,22 @@ void main() {
             py_code = []
             
             for line in lines:
-                # Limpa comentários e remove espaços e tabulações no início e fim
-                # (Isto previne erros de IndentationError no exec do Python)
                 line = line.split('//')[0].strip()
                 if not line: continue
-                
-                # Remove "int ", "volatile int ", etc para mapear perfeitamente para Python
                 line = re.sub(r'^(?:volatile\s+)?(?:unsigned\s+)?(?:int|char|short|long|uint8_t|uint16_t|uint32_t)\s+', '', line)
-                
-                # Substitui os ponteiros C pelos valores em memória
                 line = line.replace('*sw_ptr', 'sw_value')
                 line = line.replace('*led_ptr', 'led_value')
-                
-                # Remove os ponto-e-vírgula obrigatórios do C
                 line = line.rstrip(';')
-                
                 py_code.append(line)
                 
-            # Criação do ambiente de execução isolado sem funções, plano (sem indentação)
             local_vars = {'sw_value': sw_value, 'led_value': 0}
             
             try:
-                # Executamos o Python transpilado limpo de erros de identação!
                 exec('\n'.join(py_code), {}, local_vars)
                 led_value = local_vars.get('led_value', 0)
             except Exception:
-                # Falhas silenciosas de simulação (como erros de sintaxe no código C do utilizador)
                 pass
                 
-        # 4. Refletir o resultado final do código do aluno nos LEDs visuais
         for i, led in enumerate(self.leds):
             is_on = (led_value & (1 << i)) != 0
             led.set_state(is_on)

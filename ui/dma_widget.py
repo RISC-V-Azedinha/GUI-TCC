@@ -105,7 +105,7 @@ class DMAWidget(QWidget):
         # 1. PAINEL ESQUERDO: DMA CONFIG & CONTROL
         # -----------------------------------------------------
         config_panel = QFrame()
-        config_panel.setStyleSheet("background-color: #0b1120; border: 1px solid #1e293b; border-radius: 8px;")
+        config_panel.setObjectName("PanelBox")
         config_panel.setFixedWidth(280)
         c_layout = QVBoxLayout(config_panel)
         c_layout.setContentsMargins(20, 20, 20, 20)

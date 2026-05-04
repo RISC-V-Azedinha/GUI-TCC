@@ -82,25 +82,41 @@ QSplitter::handle:horizontal {
 
 /* ================== TABELAS (RegFile e RAM) ================== */
 QTableWidget {
-    background-color: #0B0D12;
+    background-color: transparent; /* Deixa a tabela mesclar com o fundo do painel/janela */
     color: #E2E8F0;
-    border: 1px solid #2A2F3A;
-    border-radius: 4px;
-    gridline-color: #1A1D24;
+    border: none; /* Remove a caixa externa grossa */
+    gridline-color: transparent; /* Oculta a grade padrão do Qt (linhas verticais) */
     font-family: 'Consolas', 'JetBrains Mono', monospace;
     font-size: 13px;
     selection-background-color: #1A1D24;
     selection-color: #F2B845;
 }
 
+/* Cria o efeito de "linha de caderno" apenas na horizontal */
+QTableWidget::item {
+    border-bottom: 1px solid #1A1D24; 
+}
+
+/* Remove a borda esquerda para as células da primeira coluna, dando um ar mais solto */
+QTableWidget::item:first-child {
+    border-left: none;
+}
+
+/* O Cabeçalho com o Efeito Teal */
 QHeaderView::section {
-    background-color: #12141A;
-    color: #8B9BB4;
+    background-color: transparent; /* Tira o bloco de cor do cabeçalho */
+    color: #6CA1A2; /* Texto do cabeçalho em Teal igual ao print */
     border: none;
-    border-bottom: 2px solid #6CA1A2; /* Trilha teal substituindo o roxo sólido */
-    border-right: 1px solid #1A1D24;
+    border-bottom: 2px solid #6CA1A2; /* A trilha de destaque embaixo */
+    border-right: none; /* Remove a linha vertical que separava os cabeçalhos */
     padding: 8px 6px;
     font-weight: bold;
+}
+
+/* Célula vazia no canto superior esquerdo (se existir) */
+QTableCornerButton::section {
+    background-color: transparent;
+    border: none;
 }
 
 QTableWidget::item:selected {
@@ -225,4 +241,85 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     background: none; 
     width: 0px;
 }
+
+/* ================== IO WIDGET ================== */
+#IOCodePanel, #IOMapPanel, #IOBoardPanel {
+    background-color: #0B0D12;
+    border: 1px solid #2A2F3A;
+    border-radius: 8px;
+}
+
+QLabel[class="IOSectionTitle"] {
+    background-color: transparent;
+    color: #8B9BB4;
+    font-weight: bold;
+    font-size: 12px;
+    border: none;
+    margin-bottom: 5px;
+}
+
+/* Modos de Operação (SIM/HARDWARE) */
+QLabel#IOModeLabel {
+    background-color: transparent;
+    color: #8B9BB4;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+QPushButton#IOSimModeBtn {
+    background-color: #6CA1A2; /* Teal da paleta */
+    color: #12141A;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 4px 12px;
+}
+
+QPushButton#IOHwModeBtn {
+    background-color: transparent;
+    color: #8B9BB4;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 4px 12px;
+}
+
+/* Tabela de Memória do IO */
+QTableWidget#IOMemoryTable {
+    border: none; 
+    background-color: transparent;
+}
+QTableWidget#IOMemoryTable::item {
+    border-bottom: 1px solid #2A2F3A;
+}
+
+/* Componentes Visuais da FPGA */
+QLabel.IOHexDisplay {
+    background-color: #12141A;
+    border: 2px solid #2A2F3A;
+    border-radius: 6px;
+    color: #DC673E; /* Laranja da paleta em vez de vermelho puro */
+    font-family: 'Consolas', monospace;
+    font-size: 26px;
+    font-weight: bold;
+}
+
+#IOLedContainer {
+    background-color: #12141A;
+    border: 1px solid #2A2F3A; /* Borda devolve o aspecto de "caixa" do componente */
+    border-radius: 16px;
+    padding: 10px;
+}
+
+#IOSwitchTrack {
+    background-color: #06070A; /* Quase preto: cria o efeito de uma cavidade afundada na placa */
+    border: 1px solid #2A2F3A;
+    border-radius: 4px;
+}
+
+QLabel.IOSwitchLabel {
+    color: #8B9BB4;
+    font-size: 8px;
+    font-weight: bold;
+    border: none;
+}
+
 """

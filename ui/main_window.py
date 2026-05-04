@@ -1,11 +1,12 @@
 # ui/main_window.py
+import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QPlainTextEdit, QTextEdit, 
                              QFrame, QSplitter, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QAbstractItemView, QStackedWidget,
-                             QProgressBar) # <-- Adicionado QProgressBar
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
-from PyQt5.QtGui import QColor, QTextFormat, QTextCursor
+                             QHeaderView, QAbstractItemView, QStackedWidget, 
+                             QProgressBar, QSizePolicy) # <-- Adicione o QSizePolicy aqui
+from PyQt5.QtCore import Qt, QSize, pyqtSignal, QUrl
+from PyQt5.QtGui import QColor, QTextFormat, QTextCursor, QDesktopServices
 import qtawesome as qta
 
 from .highlighter import RISCVHighlighter
@@ -30,16 +31,18 @@ class RV32IWidget(QWidget):
         w_layout.setContentsMargins(30, 20, 30, 30)
         w_layout.setSpacing(20)
         
-        toolbar = QHBoxLayout()
-        title = QLabel("Laboratório 1: Emulador Core RV32I Multiciclo")
-        title.setStyleSheet("font-size: 20px; font-weight: 800; color: #f8fafc;")
-        toolbar.addWidget(title)
-        toolbar.addStretch()
+        # ==========================================
+        # CRIAÇÃO DOS COMPONENTES VISUAIS
+        # ==========================================
         
+        # 1. Pipeline (Agora expansível e mais alto)
         pipeline_frame = QFrame()
-        pipeline_frame.setStyleSheet("background-color: #0B0D12; border: 1px solid #2A2F3A; border-radius: 4px; padding: 4px;")
+        pipeline_frame.setStyleSheet("background-color: #0B0D12; border: 1px solid #2A2F3A; border-radius: 4px; padding: 2px;")
+        pipeline_frame.setFixedHeight(34) # <-- Altura travada para ficar igual aos botões
+        pipeline_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed) # <-- Faz o widget esticar na largura
+        
         pipe_layout = QHBoxLayout(pipeline_frame)
-        pipe_layout.setContentsMargins(4, 4, 4, 4)
+        pipe_layout.setContentsMargins(2, 2, 2, 2)
         pipe_layout.setSpacing(4)
         
         self.stage_labels = []
@@ -47,16 +50,14 @@ class RV32IWidget(QWidget):
             lbl = QLabel(s)
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setProperty("class", "PipelineStage")
+            lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) # <-- Faz as caixinhas internas esticarem juntas
             self.stage_labels.append(lbl)
             pipe_layout.addWidget(lbl)
             
-        toolbar.addWidget(pipeline_frame)
-        toolbar.addStretch()
-        
+        # 2. Botões de Emulação
         self.btn_reset = QPushButton(" Reset")
         self.btn_reset.setIcon(qta.icon('fa5s.sync-alt', color='#f8fafc'))
         self.btn_reset.setProperty("class", "ActionBtn")
-        # Dispara o Reset do FPGA e Simulador
         self.btn_reset.clicked.connect(self.request_reset_fpga.emit) 
         
         self.btn_step = QPushButton(" Step (Clock)")
@@ -69,63 +70,102 @@ class RV32IWidget(QWidget):
         self.btn_run.setProperty("class", "ActionBtn PrimaryBtn")
         self.btn_run.clicked.connect(self.request_run_toggle.emit)
         
-        self.btn_upload = QPushButton(" Upload FPGA")
-        self.btn_upload.setIcon(qta.icon('fa5s.cloud-upload-alt', color='white'))
-        self.btn_upload.setProperty("class", "ActionBtn SuccessBtn")
-        self.btn_upload.clicked.connect(self.request_upload.emit) # <-- Conectado
-        
         self.btn_sync = QPushButton(" Sync Hardware")
         self.btn_sync.setIcon(qta.icon('fa5s.satellite-dish', color='white'))
         self.btn_sync.setProperty("class", "ActionBtn")
-        self.btn_sync.setStyleSheet("background-color: #6366f1; color: white;") # Um roxinho pra dar destaque
-        self.btn_sync.clicked.connect(self.request_sync_fpga.emit) # <--- CONECTADO
+        self.btn_sync.setStyleSheet("background-color: #6366f1; color: white; border: none;")
+        self.btn_sync.clicked.connect(self.request_sync_fpga.emit)
 
-        # --- Barra de Progresso do Upload ---
+        # 3. Botão de Upload e Barra de Progresso (Mesma altura e largura expansiva)
+        self.btn_upload = QPushButton(" Upload FPGA")
+        self.btn_upload.setIcon(qta.icon('fa5s.cloud-upload-alt', color='white'))
+        self.btn_upload.setProperty("class", "ActionBtn SuccessBtn")
+        self.btn_upload.setFixedHeight(34) # <-- Altura igual à barra de progresso
+        self.btn_upload.clicked.connect(self.request_upload.emit)
+
         self.progressBar = QProgressBar()
         self.progressBar.setRange(0, 100)
         self.progressBar.setValue(0)
-        self.progressBar.setFixedWidth(120)
-        self.progressBar.setFixedHeight(30)
+        self.progressBar.setFixedHeight(34) # <-- Altura igual ao botão
+        self.progressBar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed) # <-- Obriga a barra a engolir o espaço vazio
         self.progressBar.setStyleSheet("""
-            QProgressBar { border: 1px solid #1e293b; border-radius: 4px; text-align: center; color: white; background-color: #0f172a;}
-            QProgressBar::chunk { background-color: #10b981; border-radius: 3px; }
+            QProgressBar { border: 1px solid #2A2F3A; border-radius: 4px; text-align: center; color: white; background-color: #0B0D12;}
+            QProgressBar::chunk { background-color: #5DB373; border-radius: 3px; }
         """)
-        
-        toolbar.addWidget(self.btn_reset)
-        toolbar.addWidget(self.btn_step)
-        toolbar.addWidget(self.btn_run)
-        toolbar.addWidget(self.btn_upload)
-        toolbar.addWidget(self.btn_sync)
-        toolbar.addWidget(self.progressBar) # <-- Adicionado a UI
-        w_layout.addLayout(toolbar)
-        
+
+        # ==========================================
+        # MONTAGEM DA ÁREA CENTRAL (Splitter)
+        # ==========================================
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.setHandleWidth(25)
         
-        editor_widget = QWidget()
-        editor_layout = QVBoxLayout(editor_widget)
-        editor_layout.setContentsMargins(0,0,0,0)
-        editor_label = QLabel("📝 Código Assembly")
-        editor_label.setStyleSheet("font-weight:700; color:#94a3b8; margin-bottom: 5px;")
-        editor_layout.addWidget(editor_label)
+        # --- PAINEL ESQUERDO (Código + Botões de Emulação/Upload) ---
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
         
+        # Linha superior do painel esquerdo
+        top_editor_layout = QHBoxLayout()
+        # Cria o ícone via qtawesome
+        editor_icon = QLabel()
+        editor_icon.setPixmap(qta.icon('fa5s.file-code', color='#8B9BB4').pixmap(16, 16))
+        top_editor_layout.addWidget(editor_icon)
+        
+        # Cria o texto puro (sem emojis)
+        editor_label = QLabel("Código Assembly")
+        editor_label.setStyleSheet("font-weight:700; color:#8B9BB4; background-color: transparent;")
+        top_editor_layout.addWidget(editor_label)
+        top_editor_layout.addStretch() # Empurra os botões para a direita
+        top_editor_layout.addWidget(self.btn_reset)
+        top_editor_layout.addWidget(self.btn_step)
+        top_editor_layout.addWidget(self.btn_run)
+        top_editor_layout.addWidget(self.btn_sync)
+        
+        left_layout.addLayout(top_editor_layout)
+        
+        # Editor de Código
         self.editor = QPlainTextEdit()
         self.editor.setViewportMargins(15, 0, 0, 0)
         self.highlighter = RISCVHighlighter(self.editor.document())
         code = """# RISC-V Assembly - Fibonacci salvando em Memoria\n.global _start\n\n_start:\n    li t0, 0\n    li t1, 1\n    li t2, 10\n    li t3, 0\n    li t5, 0\n\nfib_loop:\n    beq t3, t2, end\n    sw t0, 0(t5)\n    add t4, t0, t1\n    mv t0, t1\n    mv t1, t4\n    addi t3, t3, 1\n    addi t5, t5, 4\n    j fib_loop\n\nend:\n    wfi"""
         self.editor.setPlainText(code)
-        editor_layout.addWidget(self.editor)
+        left_layout.addWidget(self.editor)
+        
+        # Linha inferior do painel esquerdo
+        bottom_editor_layout = QHBoxLayout()
+        bottom_editor_layout.setContentsMargins(0, 10, 0, 0) # Espaço entre o editor e a barra
+        bottom_editor_layout.addWidget(self.progressBar) # Sem 'addStretch', a barra estica!
+        bottom_editor_layout.addWidget(self.btn_upload)
+        
+        left_layout.addLayout(bottom_editor_layout)
+        
+        # --- PAINEL DIREITO (Pipeline + Tabelas) ---
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Adiciona o Pipeline DIRETAMENTE (assume a largura total das tabelas)
+        right_layout.addWidget(pipeline_frame)
+        right_layout.addSpacing(10) # Respiro visual
         
         hw_splitter = QSplitter(Qt.Vertical)
+        
+        # Estilo forçado das tabelas
+        tabela_moderna_css = """
+            QTableWidget { border: none; background-color: transparent; }
+            QHeaderView::section { background-color: transparent; color: #6CA1A2; border: none; border-bottom: 2px solid #6CA1A2; font-size: 12px; font-weight: bold; padding: 4px; }
+            QTableWidget::item { border-bottom: 1px solid #1A1D24; }
+        """
         
         reg_widget = QWidget()
         reg_layout = QVBoxLayout(reg_widget)
         reg_layout.setContentsMargins(0,0,0,0)
         reg_title = QLabel("📊 Banco de Registradores (RegFile)")
-        reg_title.setStyleSheet("font-weight:700; color:#94a3b8; margin-bottom: 5px;")
+        reg_title.setStyleSheet("font-weight:700; color:#8B9BB4; margin-bottom: 5px; background-color: transparent;")
         reg_layout.addWidget(reg_title)
         
         self.reg_table = QTableWidget(32, 3)
+        self.reg_table.setStyleSheet(tabela_moderna_css)
         self.reg_table.setHorizontalHeaderLabels(["Reg", "ABI", "Valor"])
         self.reg_table.verticalHeader().setVisible(False)
         self.reg_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -136,8 +176,8 @@ class RV32IWidget(QWidget):
         
         for i in range(32):
             self.reg_table.setItem(i, 0, self._create_item(f"x{i}"))
-            self.reg_table.setItem(i, 1, self._create_item(self.abi_names[i], "#94a3b8"))
-            self.reg_table.setItem(i, 2, self._create_item("0", "#3b82f6"))
+            self.reg_table.setItem(i, 1, self._create_item(self.abi_names[i], "#8B9BB4"))
+            self.reg_table.setItem(i, 2, self._create_item("0", "#6CA1A2"))
             
         reg_layout.addWidget(self.reg_table)
         
@@ -145,18 +185,17 @@ class RV32IWidget(QWidget):
         mem_layout = QVBoxLayout(mem_widget)
         mem_layout.setContentsMargins(0,0,0,0)
         mem_title = QLabel("🗄️ Memória RAM (Data)")
-        mem_title.setStyleSheet("font-weight:700; color:#94a3b8; margin-bottom: 5px; margin-top: 10px;")
+        mem_title.setStyleSheet("font-weight:700; color:#8B9BB4; margin-bottom: 5px; margin-top: 10px; background-color: transparent;")
         mem_layout.addWidget(mem_title)
         
-        # Inicializa a tabela vazia (0 linhas, 2 colunas)
         self.mem_table = QTableWidget(0, 2)
+        self.mem_table.setStyleSheet(tabela_moderna_css)
         self.mem_table.setHorizontalHeaderLabels(["Endereço", "Valor"])
         self.mem_table.verticalHeader().setVisible(False)
         self.mem_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.mem_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.mem_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
-        # O loop 'for' foi removido para a RAM começar limpa
         mem_layout.addWidget(self.mem_table)
         
         hw_splitter.addWidget(reg_widget)
@@ -164,20 +203,22 @@ class RV32IWidget(QWidget):
         hw_splitter.setStretchFactor(0, 1) 
         hw_splitter.setStretchFactor(1, 1) 
         
-        main_splitter.addWidget(editor_widget)
-        main_splitter.addWidget(hw_splitter)
+        right_layout.addWidget(hw_splitter)
         
-        # Força uma proporção inicial em pixels (ex: 800px pro código, 350px pras tabelas)
+        main_splitter.addWidget(left_widget)
+        main_splitter.addWidget(right_widget)
+        
         main_splitter.setSizes([800, 350]) 
-
-        # Diz ao Qt que, se a tela for redimensionada, o código cresce mais que as tabelas (Proporção 7 pra 3)
         main_splitter.setStretchFactor(0, 7) 
         main_splitter.setStretchFactor(1, 3)
         
         w_layout.addWidget(main_splitter, 1) 
         
+        # ==========================================
+        # CONSOLE INFERIOR
+        # ==========================================
         console_label = QLabel(" OS Console / Execution Log")
-        console_label.setStyleSheet("font-weight:700; color:#94a3b8;")
+        console_label.setStyleSheet("font-weight:700; color:#8B9BB4; background-color: transparent;")
         w_layout.addWidget(console_label)
         
         self.console = QTextEdit()
@@ -439,6 +480,16 @@ class RiscVEduApp(QMainWindow):
         self.btn_config.setProperty("class", "GhostBtn")
         h_layout.addWidget(self.btn_config)
         
+        # Botão Guide (Roteiro PDF)
+        self.btn_guide = QPushButton(" Guide")
+        self.btn_guide.setIcon(qta.icon('fa5s.book-open', color='#8B9BB4'))
+        self.btn_guide.setProperty("class", "GhostBtn")
+        
+        # Conecta a uma nova função que vamos criar
+        self.btn_guide.clicked.connect(self.open_pdf_guide)
+        
+        h_layout.addWidget(self.btn_guide)
+        
         # ---------------------------------
         
         layout.addWidget(header)
@@ -463,6 +514,17 @@ class RiscVEduApp(QMainWindow):
         self.main_layout.addWidget(self.main_content)
         
         self.switch_lab(0, self.nav_buttons[0])
+
+    def open_pdf_guide(self):
+        # Procura um arquivo chamado "Roteiro_Labs.pdf" na raiz do projeto
+        pdf_path = os.path.abspath("Roteiro_Labs.pdf")
+        
+        if os.path.exists(pdf_path):
+            # QDesktopServices.openUrl chama o leitor padrão do Windows/Linux/Mac
+            QDesktopServices.openUrl(QUrl.fromLocalFile(pdf_path))
+        else:
+            # Se não achar o PDF, joga um aviso no terminal do emulador
+            self.log(f"[ERRO] O arquivo '{pdf_path}' não foi encontrado.", "#ef4444")
 
     def switch_lab(self, index, active_btn):
         self.stacked_widget.setCurrentIndex(index)
