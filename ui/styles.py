@@ -160,24 +160,24 @@ QPushButton.SuccessBtn {
 QPushButton.SuccessBtn:hover { background-color: #4A9C5E; }
 
 /* ================== BOTÕES GHOST (Save, Load, Config) ================== */
-QPushButton.GhostBtn { 
-    background: transparent; 
-    color: #F3F3F3; 
-    border: 1px solid transparent; /* Transparente para não dar 'pulo' na tela */
-    border-radius: 4px; 
-    padding: 6px 12px; 
-    font-weight: bold; 
+QPushButton.GhostBtn {
+     background: transparent;
+     color: #F3F3F3;
+     border: none; /* Remove a sombra/aresta 3D nativa do PyQt */
+     border-radius: 4px;
+     padding: 7px 13px; /* Compensamos 1px aqui para o botão não dar 'pulo' */
+     font-weight: bold;
 }
 
-QPushButton.GhostBtn:hover { 
-    background: #1A1D24; 
-    color: #F2B845; 
+QPushButton.GhostBtn:hover {
+     background: #1A1D24;
+     color: #F2B845;
 }
 
 QPushButton.GhostBtn:pressed {
     background: #2A2F3A;
-    color: #DC673E; 
-    border-color: #DC673E;
+    color: #DC673E;
+    /* Removemos a troca de cor de borda daqui também */
 }
 
 /* ================== PIPELINE STAGES ================== */

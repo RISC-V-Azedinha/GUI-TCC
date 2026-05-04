@@ -15,6 +15,7 @@ from .os_console_widget import OSConsoleWidget
 from .io_widget import IOWidget
 from .dma_widget import DMAWidget 
 from .tiling_widget import TilingWidget
+from .nn_widget import NNWidget
 
 class RV32IWidget(QWidget):
     """Isolamos o layout do Emulador RV32I em um Widget próprio."""
@@ -398,6 +399,8 @@ class RiscVEduApp(QMainWindow):
         
         title = QLabel("RISC-V Edu Platform")
         title.setObjectName("AppTitle")
+        # Força as bordas oficiais inline, corrigindo o "buraco" vertical causado pelo patch do main.py
+        title.setStyleSheet("border-bottom: 1px solid #2A2F3A; border-right: 1px solid #2A2F3A; background-color: #0B0D12;")
         layout.addWidget(title)
         
         self.nav_buttons = []
@@ -406,8 +409,9 @@ class RiscVEduApp(QMainWindow):
             (" 2. Drivers & I/O", "fa5s.plug", True, 1),
             (" 3. DMA Controller", "fa5s.bolt", True, 2),
             (" 4. NPU Micro-Arch", "fa5s.brain", True, 3),
-            (" 5. Tiling & Scaling", "fa5s.layer-group", True, 4), 
-            (" 6. OS Console", "fa5s.terminal", True, 5)          
+            (" 5. Tiling & Scaling", "fa5s.layer-group", True, 4),
+            (" 6. OS Console", "fa5s.terminal", True, 5),
+            (" 7. Neural Network", "fa5s.project-diagram", True, 6)
         ]
         
         for name, icon_name, enabled, target_idx in labs:
@@ -417,7 +421,7 @@ class RiscVEduApp(QMainWindow):
             btn.setIcon(qta.icon(icon_name, color="#94a3b8"))
             btn.setIconSize(QSize(18, 18))
             
-            if not enabled: 
+            if not enabled:
                 btn.setEnabled(False)
             else:
                 btn.clicked.connect(lambda checked, idx=target_idx, b=btn: self.switch_lab(idx, b))
@@ -425,18 +429,8 @@ class RiscVEduApp(QMainWindow):
             self.nav_buttons.append(btn)
             layout.addWidget(btn)
             
-        layout.addStretch()
+        layout.addStretch() # Empurra tudo para cima, esticando a aba até o final inferior
         
-        status_frame = QFrame()
-        status_frame.setStyleSheet("border-top: 1px solid #1e293b; padding: 20px;")
-        status_layout = QHBoxLayout(status_frame)
-        status_layout.setContentsMargins(0,0,0,0)
-        
-        status_lbl = QLabel("🟢 FPGA SERIAL: CONNECTED")
-        status_lbl.setStyleSheet("color: #10b981; font-size: 12px; font-weight: 700; border: none;")
-        status_layout.addWidget(status_lbl)
-        
-        layout.addWidget(status_frame)
         self.main_layout.addWidget(self.sidebar)
 
     def setup_main_area(self):
@@ -448,48 +442,57 @@ class RiscVEduApp(QMainWindow):
         header = QFrame()
         header.setObjectName("Header")
         header.setFixedHeight(70)
+        # Corrige a borda inferior para casar perfeitamente com a cor do tema
+        header.setStyleSheet("border-bottom: 1px solid #2A2F3A; background-color: #12141A;")
+        
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(30, 0, 30, 0)
         
         term_icon = QLabel()
         term_icon.setPixmap(qta.icon('fa5s.plug', color='#8B9BB4').pixmap(16, 16))
+        term_icon.setStyleSheet("border: none; background: transparent;")
         h_layout.addWidget(term_icon)
         
         term_info = QLabel("/dev/ttyUSB0 @ 115200 baud")
-        term_info.setStyleSheet("color: #8B9BB4; font-family: monospace; font-weight: bold;")
+        term_info.setStyleSheet("color: #8B9BB4; font-family: monospace; font-weight: bold; border: none; background: transparent;")
         h_layout.addWidget(term_info)
+        
+        # --- NOVO: Status do FPGA movido para junto do COM ---
+        h_layout.addSpacing(25)
+        
+        status_icon = QLabel()
+        status_icon.setPixmap(qta.icon('fa5s.circle', color='#10b981').pixmap(12, 12))
+        status_icon.setStyleSheet("border: none; background: transparent;")
+        h_layout.addWidget(status_icon)
+        
+        status_lbl = QLabel("FPGA SERIAL: CONNECTED")
+        status_lbl.setStyleSheet("color: #10b981; font-size: 11px; font-weight: 800; border: none; background: transparent;")
+        h_layout.addWidget(status_lbl)
+        # -----------------------------------------------------
+        
         h_layout.addStretch()
         
         # --- NOVOS BOTÕES DO CABEÇALHO ---
-        
-        # Botão Save
         self.btn_save = QPushButton(" Save")
         self.btn_save.setIcon(qta.icon('fa5s.save', color='#8B9BB4'))
         self.btn_save.setProperty("class", "GhostBtn")
         h_layout.addWidget(self.btn_save)
         
-        # Botão Load (Ícone de pasta aberta)
         self.btn_load = QPushButton(" Load")
         self.btn_load.setIcon(qta.icon('fa5s.folder-open', color='#8B9BB4'))
         self.btn_load.setProperty("class", "GhostBtn")
         h_layout.addWidget(self.btn_load)
         
-        # Botão Config
         self.btn_config = QPushButton(" Config")
         self.btn_config.setIcon(qta.icon('fa5s.cog', color='#8B9BB4'))
         self.btn_config.setProperty("class", "GhostBtn")
         h_layout.addWidget(self.btn_config)
         
-        # Botão Guide (Roteiro PDF)
         self.btn_guide = QPushButton(" Guide")
         self.btn_guide.setIcon(qta.icon('fa5s.book-open', color='#8B9BB4'))
         self.btn_guide.setProperty("class", "GhostBtn")
-        
-        # Conecta a uma nova função que vamos criar
         self.btn_guide.clicked.connect(self.open_guide)
-        
         h_layout.addWidget(self.btn_guide)
-        
         # ---------------------------------
         
         layout.addWidget(header)
@@ -497,18 +500,20 @@ class RiscVEduApp(QMainWindow):
         self.stacked_widget = QStackedWidget()
         
         self.rv32i_view = RV32IWidget()
-        self.io_view = IOWidget()                
-        self.dma_view = DMAWidget()               
+        self.io_view = IOWidget()
+        self.dma_view = DMAWidget()
         self.npu_view = NPUWidget()
-        self.tiling_view = TilingWidget()         
-        self.os_console_view = OSConsoleWidget() 
+        self.tiling_view = TilingWidget()
+        self.os_console_view = OSConsoleWidget()
+        self.nn_view = NNWidget()
         
-        self.stacked_widget.addWidget(self.rv32i_view)     # Índice 0
-        self.stacked_widget.addWidget(self.io_view)        # Índice 1
-        self.stacked_widget.addWidget(self.dma_view)       # Índice 2
-        self.stacked_widget.addWidget(self.npu_view)       # Índice 3
-        self.stacked_widget.addWidget(self.tiling_view)    # Índice 4
-        self.stacked_widget.addWidget(self.os_console_view)# Índice 5
+        self.stacked_widget.addWidget(self.rv32i_view)      # Índice 0
+        self.stacked_widget.addWidget(self.io_view)         # Índice 1
+        self.stacked_widget.addWidget(self.dma_view)        # Índice 2
+        self.stacked_widget.addWidget(self.npu_view)        # Índice 3
+        self.stacked_widget.addWidget(self.tiling_view)     # Índice 4
+        self.stacked_widget.addWidget(self.os_console_view) # Índice 5
+        self.stacked_widget.addWidget(self.nn_view)         # Índice 6 
         
         layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.main_content)

@@ -21,7 +21,7 @@ ORANGE = "#DC673E"
 GREEN = "#5DB373"
 MUSTARD = "#F2B845"
 PURPLE = "#A855F7"
-BLUE = "#3b82f6"
+BLUE = "#6366f1"
 
 
 def hex_to_rgba(hex_color, alpha=0.2):

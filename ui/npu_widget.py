@@ -173,7 +173,7 @@ class NPUWidget(QWidget):
 
         self.btn_run = QPushButton(" Auto Run")
         self.btn_run.setIcon(qta.icon('fa5s.play', color=TEXT_PRIMARY))
-        self.btn_run.setStyleSheet(f"background-color: #3b82f6; color: white; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
+        self.btn_run.setStyleSheet(f"background-color: #6366f1; color: white; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
         self.btn_run.clicked.connect(self.request_run.emit)
         
         header.addWidget(self.btn_reset)
