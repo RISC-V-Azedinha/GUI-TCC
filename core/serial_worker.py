@@ -6,16 +6,16 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 class FPGALoader(QThread):
     progress_update = pyqtSignal(int)
-    log_msg = pyqtSignal(str, str) # Mensagem, Tipo (info, error, success)
+    log_msg = pyqtSignal(str, str) 
     finished = pyqtSignal(bool)
     telemetry_update = pyqtSignal(list, int)
 
-    def __init__(self, port="COM3", baud=115200):
+    def __init__(self, port="COM7", baud=921600): # Baud rate alto conforme main_controller
         super().__init__()
         self.port = port
         self.baud = baud
         self.payload = b''
-        self.mode = 'upload' # 'upload' ou 'reset'
+        self.mode = 'upload' 
 
     def set_payload(self, data):
         self.payload = data
@@ -24,11 +24,12 @@ class FPGALoader(QThread):
     def run(self):
         ser = None
         try:
-            self.log_msg.emit(f"Abrindo porta {self.port} a {self.baud} baud...", "info")
-            
-            # IMPORTANTE: rtscts=False e dsrdtr=False para não interferir na multiplexação do seu debug_controller
+            self.log_msg.emit(f"Conectando em {self.port} ({self.baud} baud)...", "info")
+            # rtscts=False é vital para o controle manual do pino RTS
             ser = serial.Serial(self.port, self.baud, rtscts=False, dsrdtr=False, timeout=2)
-            ser.rts = True # Garante que iniciamos no modo SoC (rodando livremente)
+            
+            # Garante que o SoC comece rodando (RTS High costuma ser 0V em conversores, liberando o Reset)
+            ser.rts = True 
             time.sleep(0.1)
 
             if self.mode == 'upload':
@@ -36,41 +37,37 @@ class FPGALoader(QThread):
             elif self.mode == 'reset':
                 self.execute_reset(ser)
             elif self.mode == 'sync':
-                self.execute_sync(ser)     
+                self.execute_sync(ser)
+            elif self.mode == 'halt':
+                self.execute_halt(ser)
+            elif self.mode == 'resume':
+                self.execute_resume(ser)   
                 
             self.finished.emit(True)
             
-        except serial.SerialException as e:
-            self.log_msg.emit(f"Erro Serial: A porta {self.port} não foi encontrada, não está conectada ou está em uso.", "error")
-            self.finished.emit(False)
         except Exception as e:
-            self.log_msg.emit(f"Erro inesperado: {str(e)}", "error")
+            self.log_msg.emit(f"Erro: {str(e)}", "error")
             self.finished.emit(False)
         finally:
             if ser and ser.is_open:
                 ser.close()
 
     def execute_reset(self, ser):
-        self.log_msg.emit("Acionando Hard Reset via RTS...", "info")
-        
-        # Sequência de Reset remoto do seu debug_controller.vhd
-        ser.rts = False
-        time.sleep(0.05)
-        ser.write(b'\xCA\xFE\xBA\xBE') # Magic Word
-        time.sleep(0.05)
+        self.log_msg.emit("Enviando sinal de Reset via Hardware...", "info")
+        ser.rts = False # Ativa Reset (Geralmente 3.3V no pino)
+        time.sleep(0.1)
+        ser.write(b'\xCA\xFE\xBA\xBE') # Magic Word para o debug_controller
         ser.write(b'\x04')             # CMD_RESET
-        time.sleep(0.05)
-        
-        ser.reset_input_buffer()
-        ser.rts = True                 # Devolve o processador para a execução
-        
-        if self.mode == 'reset':       # Só avisa se foi um reset manual do usuário
-            self.log_msg.emit("Placa FPGA resetada remotamente com sucesso!", "success")
+        time.sleep(0.1)
+        ser.rts = True  # Libera CPU
+        if self.mode == 'reset':
+            self.log_msg.emit("Hardware Reset finalizado com sucesso.", "success")
 
     def execute_upload(self, ser):
         size = len(self.payload)
         
-        # 1. Faz o auto-reset (Hardware Reset via Debug Controller)
+        # 1. Faz o auto-reset via Hardware Reset (Debug Controller)
+        # Isso garante que o Bootloader da FPGA seja a primeira coisa a rodar
         self.execute_reset(ser)
         
         # 2. Aguarda o Bootloader da FPGA acordar e mandar "BOOT"
@@ -81,30 +78,29 @@ class FPGALoader(QThread):
         
         while time.time() - start_wait < 4.0: # 4 segundos de timeout
             if ser.in_waiting:
-                # DEBUG: Vamos ler os bytes crus para ver se é problema de Baud Rate!
+                # Lemos o que estiver no buffer da UART
                 raw_bytes = ser.read(ser.in_waiting)
-                self.log_msg.emit(f"RAW RX: {raw_bytes}", "info")
+                try:
+                    char = raw_bytes.decode('utf-8', errors='ignore')
+                    buffer += char
+                except:
+                    pass
                 
-                char = raw_bytes.decode('utf-8', errors='ignore')
-                buffer += char
                 if "BOOT" in buffer:
                     boot_found = True
                     break
-                
-                if len(buffer) > 50: 
-                    buffer = buffer[-20:] 
         
         if not boot_found:
-            raise Exception("Timeout aguardando 'BOOT'. A placa não respondeu nada ou o baud rate está errado.")
+            raise Exception("Timeout aguardando 'BOOT'. Certifique-se que a FPGA está ligada e o RTS configurado corretamente.")
             
         self.log_msg.emit("Bootloader detectado! Iniciando Handshake...", "success")
         
-        # Dá um respiro e limpa sujeiras do buffer
+        # Limpa sujeiras do buffer antes de começar o protocolo binário
         time.sleep(0.1)
         ser.reset_input_buffer()
         
         # 3. Handshake de Bootloader
-        self.log_msg.emit("Enviando Magic Word (0xCAFEBABE) para o Bootloader...", "info")
+        # Enviamos a Magic Word para o Bootloader saber que o PC quer carregar um binário
         ser.write(b'\xCA\xFE\xBA\xBE')
         
         start_time = time.time()
@@ -112,74 +108,73 @@ class FPGALoader(QThread):
         while time.time() - start_time < 2.0:
             if ser.in_waiting:
                 ack = ser.read(1)
-                if ack == b'!':
+                if ack == b'!': # O '!' é a confirmação do Bootloader VHDL
                     break
                     
         if ack != b'!':
-            raise Exception(f"Sem resposta do Bootloader. Recebido: {ack}")
+            raise Exception(f"Sem resposta de Handshake. Recebido: {ack}")
             
-        self.log_msg.emit(f"Handshake OK! Enviando tamanho do binário ({size} bytes).", "info")
+        self.log_msg.emit(f"Handshake OK! Enviando binário ({size} bytes).", "info")
+        
+        # 4. Envia o tamanho do binário (4 bytes, Little Endian)
         ser.write(struct.pack('<I', size))
         time.sleep(0.05)
 
-        # 4. Envio dos blocos (Chunks)
-        self.log_msg.emit("Transferindo binário para a FPGA...", "info")
+        # 5. Envio dos blocos (Chunks)
         chunk_size = 64
         for i in range(0, size, chunk_size):
             chunk = self.payload[i : i + chunk_size]
             ser.write(chunk)
             ser.flush()
             
+            # Atualiza a barra de progresso na GUI
             progress = int(((i + len(chunk)) / size) * 100)
             self.progress_update.emit(progress)
+            
+            # Pequeno delay para não sobrecarregar o buffer de recepção da FPGA
             time.sleep(0.002) 
             
-        self.log_msg.emit("Upload físico finalizado. Aguardando processador...", "info")
+        self.log_msg.emit("Upload finalizado. Colocando CPU em standby...", "info")
         
-        # 5. Aguardar a FPGA confirmar que vai executar
-        start_wait_app = time.time()
-        while time.time() - start_wait_app < 3.0:
-            if ser.in_waiting:
-                c = ser.read(1).decode('utf-8', errors='ignore')
-                if c == '>':
-                    self.log_msg.emit("FPGA confirmou: Executando AXON-OS!", "success")
-                    return
-                    
-        self.log_msg.emit("Upload feito, mas não recebi o '>' de confirmação de execução.", "error")
-    
+        # ======================================================================
+        # 6. ESTADO DE ESPERA (A chave para não rodar sozinho)
+        # ======================================================================
+        # Após o upload, enviamos um comando de HALT e seguramos o RTS.
+        # Isso impede que o processador comece a iteração do Fibonacci antes do Run.
+        
+        ser.rts = False # Mantém o sinal de controle ativado
+        time.sleep(0.05)
+        ser.write(b'\xCA\xFE\xBA\xBE') # Magic Word
+        ser.write(b'\x01')             # CMD_HALT (Sinaliza ao seu debug_controller para pausar)
+        
+        self.log_msg.emit("Sistema pronto. Clique em 'Run' para iniciar.", "success")
+
     def execute_sync(self, ser):
-        """Pausa a CPU, lê os registradores e resume a execução."""
-        # 1. Intercepta a CPU (Halt)
-        ser.rts = False
+        ser.rts = False # Halt
         time.sleep(0.05)
         ser.write(b'\xCA\xFE\xBA\xBE')
-        time.sleep(0.05) # Tempo para o processador bater no estágio de Fetch e congelar
+        ser.write(b'\x10') # CMD_READ_REG
         
-        # 2. Pede o dump de memória (CMD_READ_REG)
-        ser.reset_input_buffer()
-        ser.write(b'\x10')
-        
-        # 3. Lê os 132 bytes
         dados = ser.read(132)
-        
-        # 4. Libera a CPU de volta para o SO (Resume)
-        ser.write(b'\x02')
-        time.sleep(0.05)
+        ser.write(b'\x02') # CMD_RESUME
         ser.rts = True
         
-        # 5. Processa os dados recebidos
         if len(dados) == 132:
-            regs = []
-            # Converte os 32 registradores (Little Endian)
-            for i in range(32):
-                val = int.from_bytes(dados[i*4 : i*4+4], byteorder='little')
-                regs.append(val)
-            
-            # O último bloco de 4 bytes é o PC
-            pc_val = int.from_bytes(dados[128:132], byteorder='little')
-            
-            # Manda pra interface!
+            regs = [int.from_bytes(dados[i*4 : i*4+4], 'little') for i in range(32)]
+            pc_val = int.from_bytes(dados[128:132], 'little')
             self.telemetry_update.emit(regs, pc_val)
-            self.log_msg.emit(f"Telemetria recebida! PC Atual: 0x{pc_val:08X}", "info")
-        else:
-            self.log_msg.emit(f"Falha na telemetria. Recebidos {len(dados)}/132 bytes.", "error")
+    
+    def execute_halt(self, ser):
+        """Para a execução no hardware imediatamente."""
+        ser.rts = False # Ativa o sinal de controle físico
+        time.sleep(0.01)
+        ser.write(b'\xCA\xFE\xBA\xBE')
+        ser.write(b'\x01') # CMD_HALT
+        self.log_msg.emit("Hardware: Execução Pausada.", "info")
+
+    def execute_resume(self, ser):
+        """Retoma a execução no hardware."""
+        ser.write(b'\xCA\xFE\xBA\xBE')
+        ser.write(b'\x02') # CMD_RESUME
+        ser.rts = True  # Libera o processador
+        self.log_msg.emit("Hardware: Execução Retomada.", "success")

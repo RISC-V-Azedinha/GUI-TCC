@@ -278,53 +278,37 @@ class RV32IWidget(QWidget):
         # 3. Ordena a tabela pela primeira coluna (Endereço) em ordem crescente
         self.mem_table.sortItems(0, Qt.AscendingOrder)
 
+# Dentro da classe RV32IWidget em ui/main_window.py
+
     def update_hardware_ui(self, regs: list, memory: dict, stage: int):
+        # Atualiza Labels de Pipeline
         for i, lbl in enumerate(self.stage_labels):
-            if i == stage:
-                lbl.setProperty("class", "PipelineStageActive")
-            else:
-                lbl.setProperty("class", "PipelineStage")
+            lbl.setProperty("class", "PipelineStageActive" if i == stage else "PipelineStage")
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
 
+        # Atualiza Registradores com as cores do tema novo
         for i in range(32):
             current_val = regs[i]
             item = self.reg_table.item(i, 2)
             if int(item.text()) != current_val:
                 item.setText(str(current_val))
-                item.setBackground(QColor("#1e3a8a")) 
-                item.setForeground(QColor("#bfdbfe"))
+                item.setBackground(QColor("#2A2F3A")) # Destaque escuro
+                item.setForeground(QColor("#DC673E")) # Laranja (Mudança)
             else:
                 item.setBackground(QColor("transparent"))
-                item.setForeground(QColor("#3b82f6"))
-                
-        # =======================================================
-        # ATUALIZAÇÃO DINÂMICA DA MEMÓRIA RAM
-        # =======================================================
-        
-        # 1. Atualiza as linhas que já existem na tabela visualmente
+                item.setForeground(QColor("#6CA1A2")) # Teal (Estável)
+
+        # Atualiza Memória RAM
         for row in range(self.mem_table.rowCount()):
             addr_item = self.mem_table.item(row, 0)
             val_item = self.mem_table.item(row, 1)
-            
             if addr_item and val_item:
-                # Converte o "0x00000000" da tabela de volta para int
                 addr = int(addr_item.text(), 16)
-                current_val = memory.get(addr, 0)
-                
-                # Se o valor mudou neste ciclo de clock
-                if int(val_item.text()) != current_val:
-                    val_item.setText(str(current_val))
-                    val_item.setBackground(QColor("#2A2F3A")) # Fundo de destaque
-                    val_item.setForeground(QColor("#DC673E")) # Texto Laranja
-                else:
-                    val_item.setBackground(QColor("transparent"))
-                    val_item.setForeground(QColor("#6CA1A2")) # Texto Teal (Estável)
-
-        # 2. Garante que novos endereços gravados na memória do modelo 
-        # (que ainda não ganharam uma linha na interface) sejam criados.
-        for addr, val in memory.items():
-            self.update_memory_view(addr, val)
+                val = memory.get(addr, 0)
+                if int(val_item.text()) != val:
+                    val_item.setText(str(val))
+                    val_item.setForeground(QColor("#DC673E"))
 
     def highlight_line(self, line_idx: int):
         extra_selections = []

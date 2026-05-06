@@ -30,7 +30,7 @@ class MiniAssembler:
 
         # Pass 1: Mapear Labels e limpar o código
         for line in lines:
-            line = line.split('#')[0].strip() # Remove comentários
+            line = line.split('#')[0].strip() 
             if not line or line.startswith('.'): continue
             if ':' in line:
                 label, rest = line.split(':', 1)
@@ -46,19 +46,18 @@ class MiniAssembler:
         machine_code = []
         pc = 0
         for line in clean_lines:
-            # Troca vírgulas e parênteses por espaço para extrair os argumentos limpos
             parts = re.sub(r'[,()]', ' ', line).split()
-            op = parts[0]
+            op = parts[0].lower()
             args = parts[1:]
 
-            # Tratamento de Pseudo-Instruções
-            if op == 'li':   # li rd, imm -> addi rd, x0, imm
+            # --- Suporte a Pseudo-Instruções ---
+            if op == 'li':   
                 op = 'addi'
                 args = [args[0], 'x0', args[1]]
-            elif op == 'mv': # mv rd, rs -> addi rd, rs, 0
+            elif op == 'mv': 
                 op = 'addi'
                 args = [args[0], args[1], '0']
-            elif op == 'j':  # j offset -> jal x0, offset
+            elif op == 'j':  
                 op = 'jal'
                 args = ['x0', args[0]]
 
@@ -67,128 +66,121 @@ class MiniAssembler:
                 if op == 'addi':
                     rd, rs1, imm = cls.REGS[args[0]], cls.REGS[args[1]], int(args[2], 0) & 0xFFF
                     instr_bin = (imm << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | 0x13
+                
                 elif op == 'add':
                     rd, rs1, rs2 = cls.REGS[args[0]], cls.REGS[args[1]], cls.REGS[args[2]]
                     instr_bin = (0 << 25) | (rs2 << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | 0x33
-                elif op == 'sw': # sw rs2, imm(rs1)
+                
+                elif op == 'sw': 
                     rs2, imm, rs1 = cls.REGS[args[0]], int(args[1], 0) & 0xFFF, cls.REGS[args[2]]
                     imm11_5 = (imm >> 5) & 0x7F
                     imm4_0 = imm & 0x1F
                     instr_bin = (imm11_5 << 25) | (rs2 << 20) | (rs1 << 15) | (2 << 12) | (imm4_0 << 7) | 0x23
-                elif op == 'lw': # lw rd, imm(rs1)
-                    rd, imm, rs1 = cls.REGS[args[0]], int(args[1], 0) & 0xFFF, cls.REGS[args[2]]
-                    instr_bin = (imm << 20) | (rs1 << 15) | (2 << 12) | (rd << 7) | 0x03
-                elif op == 'beq':
+                
+                elif op in ['beq', 'bne']:
                     rs1, rs2 = cls.REGS[args[0]], cls.REGS[args[1]]
                     offset = (labels[args[2]] - pc) & 0x1FFF
                     imm12 = (offset >> 12) & 1
-                    imm11_5 = (offset >> 5) & 0x3F
-                    imm4_1 = (offset >> 1) & 0xF
                     imm11 = (offset >> 11) & 1
-                    instr_bin = (imm12 << 31) | (imm11_5 << 25) | (rs2 << 20) | (rs1 << 15) | (0 << 12) | (imm4_1 << 8) | (imm11 << 7) | 0x63
+                    imm10_5 = (offset >> 5) & 0x3F
+                    imm4_1 = (offset >> 1) & 0xF
+                    funct3 = 0x0 if op == 'beq' else 0x1
+                    instr_bin = (imm12 << 31) | (imm10_5 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (imm4_1 << 8) | (imm11 << 7) | 0x63
+                
+                elif op == 'lui':
+                    rd, imm = cls.REGS[args[0]], int(args[1], 0) & 0xFFFFF
+                    instr_bin = (imm << 12) | (rd << 7) | 0x37
+                
                 elif op == 'jal':
                     rd = cls.REGS[args[0]]
                     offset = (labels[args[1]] - pc) & 0xFFFFF
+                    # RISC-V J-Type immediate encoding é complexo, simplificando:
                     imm20 = (offset >> 20) & 1
-                    imm19_12 = (offset >> 12) & 0xFF
-                    imm11 = (offset >> 11) & 1
                     imm10_1 = (offset >> 1) & 0x3FF
-                    instr_bin = (imm20 << 31) | (imm10_1 << 21) | (imm11 << 20) | (imm19_12 << 12) | (rd << 7) | 0x6f
+                    imm11 = (offset >> 11) & 1
+                    imm19_12 = (offset >> 12) & 0xFF
+                    instr_bin = (imm20 << 31) | (imm10_1 << 21) | (imm11 << 20) | (imm19_12 << 12) | (rd << 7) | 0x6F
+                
                 elif op == 'wfi':
                     instr_bin = 0x10500073
+                
                 else:
-                    return [] # Falha, instrução não reconhecida
-            except Exception as e:
-                print(f"Erro na linha '{line}': {e}")
-                return []
+                    print(f"Instrução {op} não suportada pelo MiniAssembler.")
+                    return []
 
-            machine_code.append(instr_bin)
-            pc += 4
+                machine_code.append(instr_bin)
+                pc += 4
+
+            except Exception as e:
+                print(f"Erro ao montar '{line}': {e}")
+                return []
 
         return machine_code
 
 class MainController:
-    """
-    Controller (MVC): A ponte inteligente.
-    Controla o timer, injeta o código do View no Model, dita as cores de log,
-    e devolve os resultados do Model para a tela atualizar.
-    """
-    def __init__(self, model: RISCV_Emulator, view: RiscVEduApp):
+    def __init__(self, model, view):
         self.model = model
         self.view = view
         
         self.run_timer = QTimer()
         self.run_timer.timeout.connect(self.handle_step)
         
-        # Conectar os sinais emitidos pela View aos métodos do Controller
-        self.view.request_reset.connect(self.handle_reset)
+        # Worker configurado para a porta correta
+        self.fpga_worker = FPGALoader(port="COM7", baud=921600)
+        
+        # CONEXÕES DE SINAIS (Novas Pontes)
+        self.view.request_reset_fpga.connect(self.on_click_reset_fpga)
+        self.view.request_upload.connect(self.on_click_upload)
+        self.view.request_sync_fpga.connect(self.request_hardware_sync)
         self.view.request_step.connect(self.handle_step)
         self.view.request_run_toggle.connect(self.handle_run_toggle)
-        
-        # --- Configuração do Worker Serial (FPGA) ---
-        self.fpga_worker = FPGALoader(port="COM3", baud=921600)
+
+        # Feedback do Worker para a UI
         self.fpga_worker.log_msg.connect(self.display_log)
-        
-        # Descomente a linha abaixo se a sua View tiver uma progressBar configurada:
-        # self.fpga_worker.progress_update.connect(self.view.progressBar.setValue)
-        
-        # Estado inicial
-        self.handle_reset(self.view.editor.toPlainText())
-        self.view.request_upload.connect(self.on_click_upload)
-        self.view.request_reset_fpga.connect(self.on_click_reset_fpga)
-        self.view.request_sync_fpga.connect(self.request_hardware_sync)
+        self.fpga_worker.progress_update.connect(self.view.progressBar.setValue)
         self.fpga_worker.telemetry_update.connect(self.on_telemetry_received)
 
-    # --- Métodos de Interação com a FPGA ---
+        # Estado inicial
+        self.handle_reset(self.view.editor.toPlainText())
 
-    def on_click_upload(self):
-        asm_code = self.view.editor.toPlainText()
-        
-        # Opcional: Atualiza o simulador local apenas para a UI interativa funcionar
-        self.model.parse_code(asm_code)
-        
-        # AGORA SIM: Compila o texto em código de máquina de verdade!
-        instructions = MiniAssembler.assemble(asm_code)
-        
-        if not instructions:
-            self.display_log("Erro: O Assembler falhou. Verifique se você usou uma instrução não suportada.", "error")
-            return
 
-        self.display_log(f"Código montado com sucesso: {len(instructions)} instruções geradas.", "info")
-
-        # Converte a lista de inteiros em payload binário (Little Endian)
-        binary_data = self.model.get_binary_image(instructions)
-        
-        if not binary_data:
-            self.display_log("Erro ao gerar o formato binário.", "error")
-            return
-            
-        # Despacha para a FPGA via Thread
-        self.fpga_worker.set_payload(binary_data)
-        self.fpga_worker.start()
-    
     def on_click_reset_fpga(self):
         """Executa o reset sincronizado: Local (Simulador) e Remoto (Placa)."""
-        # Reset Local (Simulador)
+        # Reset Local
         self.handle_reset(self.view.editor.toPlainText())
         
-        # Reset Remoto (Hardware) - Tenta enviar se a porta existir
+        # Configura o worker para modo reset e dispara a thread
         self.fpga_worker.mode = 'reset'
         self.fpga_worker.start()
 
-    def display_log(self, message: str, msg_type: str):
-        """Recebe mensagens do Worker Serial e envia para o log da View."""
-        color = "#cbd5e1" # Default (cinza claro)
-        if msg_type == "error":
-            color = "#ef4444" # Vermelho
-        elif msg_type == "success":
-            color = "#10b981" # Verde
-        elif msg_type == "info":
-            color = "#38bdf8" # Azul claro
-            
-        self.view.log(f"[FPGA] {message}", color)
+    def on_click_upload(self):
+        asm_code = self.view.editor.toPlainText()
+        instructions = MiniAssembler.assemble(asm_code)
+        
+        if not instructions:
+            self.display_log("Erro: O Assembler não reconheceu alguma instrução.", "error")
+            return
 
-    # --- Métodos de Controle do Simulador Local ---
+        binary_data = self.model.get_binary_image(instructions)
+        self.view.progressBar.setValue(0)
+        self.fpga_worker.set_payload(binary_data)
+        self.fpga_worker.start()
+
+    def on_telemetry_received(self, regs, pc_val):
+        # Sincroniza o modelo local com o hardware real
+        self.model.pc = pc_val
+        self.model.regs = regs
+        # Atualiza a interface (as cores de destaque já estão na View)
+        self.view.update_hardware_ui(regs, self.model.memory, 0)
+        
+        current_line = self.model.get_current_line()
+        self.view.highlight_line(current_line)
+        self.display_log(f"Sincronizado! Hardware PC: 0x{pc_val:08X}", "success")
+
+    def display_log(self, message, msg_type):
+        colors = {"error": "#ef4444", "success": "#10b981", "info": "#38bdf8"}
+        color = colors.get(msg_type, "#cbd5e1")
+        self.view.log(f"[FPGA] {message}", color)
 
     def handle_reset(self, code_text: str):
         """Ao receber o código fonte, refaz o emulador."""
@@ -224,20 +216,33 @@ class MainController:
             self.view.set_run_state(False)
             self.view.log(">> CRASH: A execução foi interrompida.", "#ef4444")
 
+# No controllers/main_controller.py
+
     def handle_run_toggle(self):
-        """Liga ou desliga a execução contínua."""
+        """Liga ou desliga a execução contínua (Local e Hardware)."""
         if self.run_timer.isActive():
+            # PARAR (PAUSE)
             self.run_timer.stop()
             self.view.set_run_state(False)
+            
+            # --- Hardware: Envia comando de HALT ---
+            self.fpga_worker.mode = 'halt'
+            self.fpga_worker.start()
+            
             self.view.log(">> Clock Automático Pausado.", "#f59e0b")
         else:
+            # RETOMAR (RUN)
             if self.model.halted:
-                # Se estiver parado no final, força um reset com o texto atual da view
                 self.handle_reset(self.view.editor.toPlainText())
-                
+            
+            # --- Hardware: Envia comando de RESUME ---
+            self.fpga_worker.mode = 'resume'
+            self.fpga_worker.start()
+
+            # Simulador Local
             self.run_timer.start(100) # 10Hz
             self.view.set_run_state(True)
-            self.view.log(">> Executando clock contínuo (10Hz)...", "#3b82f6")
+            self.view.log(">> Executando clock contínuo...", "#3b82f6")
 
     def _sync_view(self):
         """Força a View a ler os dados mais recentes do Model."""
