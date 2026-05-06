@@ -6,7 +6,6 @@ import struct
 class RISCV_Emulator:
     """
     Model (MVC): Responsável puramente pela lógica de negócio e simulação do hardware.
-    Não possui conhecimento da interface gráfica (PyQt).
     """
     def __init__(self) -> None:
         self.regs: List[int] = [0] * 32
@@ -51,7 +50,7 @@ class RISCV_Emulator:
         return 0, 0
 
     def parse_code(self, text: str) -> None:
-        self.__init__() # Reset do estado interno
+        self.__init__() 
         
         lines = text.split('\n')
         for line_idx, line in enumerate(lines):
@@ -71,11 +70,9 @@ class RISCV_Emulator:
                 self.instructions.append(raw)
 
     def get_current_line(self) -> int:
-        """Retorna a linha no editor correspondente ao PC atual."""
         return self.line_map.get(self.pc, -1)
 
     def clock_tick(self) -> Tuple[bool, str, int]:
-        """Avança a máquina de estados (FSM) em um ciclo de relógio."""
         if self.halted: return False, "", -1
 
         current_stage = self.stage
@@ -95,11 +92,12 @@ class RISCV_Emulator:
             
         elif self.stage == 2: # EX
             msg = self.stage_execute()
+            # Máquina de estados ajustada para as novas instruções
             if self.op in ['lw', 'sw']:
                 self.stage = 3 
-            elif self.op in ['li', 'mv', 'add', 'addi']:
+            elif self.op in ['li', 'mv', 'add', 'addi', 'lui']:
                 self.stage = 4 
-            elif self.op in ['j', 'beq']:
+            elif self.op in ['j', 'beq', 'bne']:
                 self.stage = 0 
             elif self.op == 'wfi':
                 self.stage = 4 
@@ -121,87 +119,112 @@ class RISCV_Emulator:
 
     def stage_decode(self) -> str:
         parts = self.IR.replace(',', ' ').split()
-        self.op = parts[0]
+        self.op = parts[0].lower() # .lower() para evitar problemas com maiúsculas
         self.rd = self.rs1 = self.rs2 = self.imm = self.A = self.B = 0
         
         try:
-            if self.op == 'li':
+            if self.op == 'lui':
                 self.rd = self.get_reg_idx(parts[1])
-                self.imm = int(parts[2])
+                # Lui carrega o valor e desloca 12 bits para a esquerda (Upper Immediate)
+                self.imm = int(parts[2], 0) << 12
+                return f"[ ID  ] Decodificado 'lui': Alvo x{self.rd}, Imediato deslocado={hex(self.imm)}"
+            
+            elif self.op == 'li':
+                self.rd = self.get_reg_idx(parts[1])
+                self.imm = int(parts[2], 0)
                 return f"[ ID  ] Decodificado 'li': Alvo x{self.rd}, Imediato={self.imm}"
+            
             elif self.op == 'mv':
                 self.rd = self.get_reg_idx(parts[1])
                 self.rs1 = self.get_reg_idx(parts[2])
                 self.A = self.regs[self.rs1]
                 return f"[ ID  ] Decodificado 'mv': Lê x{self.rs1} (Valor={self.A})"
+            
             elif self.op == 'add':
                 self.rd = self.get_reg_idx(parts[1])
                 self.rs1 = self.get_reg_idx(parts[2])
                 self.rs2 = self.get_reg_idx(parts[3])
                 self.A, self.B = self.regs[self.rs1], self.regs[self.rs2]
                 return f"[ ID  ] Decodificado 'add': Lê x{self.rs1}({self.A}) e x{self.rs2}({self.B})"
+            
             elif self.op == 'addi':
                 self.rd = self.get_reg_idx(parts[1])
                 self.rs1 = self.get_reg_idx(parts[2])
-                self.imm = int(parts[3])
+                self.imm = int(parts[3], 0)
                 self.A = self.regs[self.rs1]
                 return f"[ ID  ] Decodificado 'addi': Lê x{self.rs1}({self.A}), Imm={self.imm}"
+            
             elif self.op == 'lw':
                 self.rd = self.get_reg_idx(parts[1])
                 self.imm, self.rs1 = self.parse_mem_op(parts[2])
                 self.A = self.regs[self.rs1]
                 return f"[ ID  ] Decodificado 'lw': Base x{self.rs1}({self.A}), Offset={self.imm}"
+            
             elif self.op == 'sw':
                 self.rs2 = self.get_reg_idx(parts[1])
                 self.imm, self.rs1 = self.parse_mem_op(parts[2])
                 self.A, self.B = self.regs[self.rs1], self.regs[self.rs2]
                 return f"[ ID  ] Decodificado 'sw': Salvar x{self.rs2}({self.B}) em Base x{self.rs1}({self.A})+{self.imm}"
+            
             elif self.op == 'j':
                 self.imm = self.labels.get(parts[1], self.pc + 1)
                 return f"[ ID  ] Decodificado 'j': Alvo '{parts[1]}' resolvido para PC={self.imm}"
-            elif self.op == 'beq':
+            
+            elif self.op in ['beq', 'bne']:
                 self.rs1, self.rs2 = self.get_reg_idx(parts[1]), self.get_reg_idx(parts[2])
                 self.A, self.B = self.regs[self.rs1], self.regs[self.rs2]
                 self.imm = self.labels.get(parts[3], self.pc + 1)
-                return f"[ ID  ] Decodificado 'beq': Lê x{self.rs1}({self.A}) e x{self.rs2}({self.B})"
+                return f"[ ID  ] Decodificado '{self.op}': Lê x{self.rs1}({self.A}) e x{self.rs2}({self.B})"
+            
             elif self.op == 'wfi':
                 return "[ ID  ] Decodificado 'wfi': Aguardar Interrupção (Halt)"
+            
             else:
                 return f"[ ID  ] Opcode ignorado/desconhecido: {self.op}"
         except Exception:
             return "[ ID  ] Erro ao decodificar operandos."
 
     def stage_execute(self) -> str:
-        if self.op in ['li', 'mv']:
+        if self.op == 'lui':
+            self.ALUOut = self.imm
+            return f"[ EX  ] LUI Pass-through: Resultado = {hex(self.ALUOut)}"
+        
+        elif self.op in ['li', 'mv']:
             self.ALUOut = self.imm if self.op == 'li' else self.A
             return f"[ EX  ] ULA Pass-through: Resultado = {self.ALUOut}"
+        
         elif self.op == 'add':
             self.ALUOut = self.A + self.B
             return f"[ EX  ] ULA: {self.A} + {self.B} = {self.ALUOut}"
+        
         elif self.op == 'addi':
             self.ALUOut = self.A + self.imm
             return f"[ EX  ] ULA: {self.A} + {self.imm} = {self.ALUOut}"
+        
         elif self.op in ['lw', 'sw']:
             self.ALUOut = (self.A + self.imm) & ~3
             return f"[ EX  ] Calcula Endereço: {self.A} + {self.imm} -> {self.ALUOut}"
+        
         elif self.op == 'j':
             self.pc = self.imm
             return f"[ EX  ] Resolve Jump: Novo PC = {self.pc}"
+        
         elif self.op == 'beq':
             self.pc = self.imm if self.A == self.B else self.pc + 1
-            return f"[ EX  ] Resolve Branch: {self.A} == {self.B} -> PC={self.pc}"
+            return f"[ EX  ] Resolve BEQ: {self.A} == {self.B} -> PC={self.pc}"
+            
+        elif self.op == 'bne':
+            self.pc = self.imm if self.A != self.B else self.pc + 1
+            return f"[ EX  ] Resolve BNE: {self.A} != {self.B} -> PC={self.pc}"
+        
         else:
             return "[ EX  ] Nenhum cálculo necessário (NOP)."
 
     def stage_memory(self) -> str:
         if self.op == 'lw':
-            # Se o endereço for lido antes de ser escrito, registramos ele na RAM com valor 0
-            if self.ALUOut not in self.memory:
-                self.memory[self.ALUOut] = 0
-            
+            if self.ALUOut not in self.memory: self.memory[self.ALUOut] = 0
             self.MDR = self.memory[self.ALUOut]
             return f"[ MEM ] Leu Memória: Mem[{self.ALUOut}] = {self.MDR}"
-            
         elif self.op == 'sw':
             self.memory[self.ALUOut] = self.B
             self.pc += 1
@@ -210,7 +233,7 @@ class RISCV_Emulator:
             return "[ MEM ] Sem acesso à memória neste ciclo."
 
     def stage_writeback(self) -> str:
-        if self.op in ['li', 'mv', 'add', 'addi']:
+        if self.op in ['li', 'mv', 'add', 'addi', 'lui']:
             if self.rd != 0: self.regs[self.rd] = self.ALUOut
             self.pc += 1
             return f"[ WB  ] Registrador x{self.rd} atualizado para {self.ALUOut}. PC Avança."
@@ -225,56 +248,14 @@ class RISCV_Emulator:
             self.pc += 1
             return "[ WB  ] Ciclo concluído. PC Avança."
 
-
-    def generate_binary_payload(instructions):
-    # instruções: lista de inteiros de 32 bits (ex: [0x00000013, 0x00100093])
-    # '<I' garante o formato Little Endian (padrão RISC-V)
-        return b''.join(struct.pack('<I', instr) for instr in instructions)
-    
-
+    # --- MÉTODOS DE PAYLOAD (MANTIDOS) ---
     def get_binary_image(self, instructions_list):
-        """
-        Converte uma lista de instruções (ints, strings hex/bin, ou objetos) 
-        em um payload binário Little Endian.
-        """
         import struct
         payload = b''
-        
         for instr in instructions_list:
             try:
-                val = 0
-                
-                # 1. Se já for um número inteiro
-                if isinstance(instr, int):
-                    val = instr
-                    
-                # 2. Se for um texto (String Hex, Binária ou Decimal)
-                elif isinstance(instr, str):
-                    instr_clean = instr.strip().lower()
-                    if instr_clean.startswith('0x'):
-                        val = int(instr_clean, 16)
-                    elif instr_clean.startswith('0b'):
-                        val = int(instr_clean, 2)
-                    elif len(instr_clean) == 32 and all(c in '01' for c in instr_clean):
-                        val = int(instr_clean, 2) # Binário puro de 32 bits sem '0b'
-                    else:
-                        val = int(instr_clean) # Tenta decimal
-                        
-                # 3. Se for um Objeto criado por você (ex: instâncias de uma classe Instruction)
-                elif hasattr(instr, 'machine_code'):
-                    val = int(instr.machine_code)
-                elif hasattr(instr, 'value'):
-                    val = int(instr.value)
-                    
-                else:
-                    # Tenta converter a força bruta
-                    val = int(instr)
-
-                # Aplica a máscara 0xFFFFFFFF para garantir que cabe em 32-bits unsigned
+                val = instr if isinstance(instr, int) else int(str(instr), 0)
                 payload += struct.pack('<I', val & 0xFFFFFFFF)
-                
-            except Exception as e:
-                print(f"Erro ao converter instrução '{instr}' (tipo {type(instr)}): {e}")
-                return b'' # Retorna vazio para a GUI avisar do erro
-                
+            except:
+                return b''
         return payload
