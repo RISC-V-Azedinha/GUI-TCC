@@ -381,12 +381,16 @@ class RV32IWidget(QWidget):
         self.mem_table.setItem(row_idx, 1, self._create_item(str(value), "#6CA1A2"))
         self.mem_table.sortItems(0, Qt.AscendingOrder)
 
+# Dentro da classe RV32IWidget em ui/main_window.py
+
     def update_hardware_ui(self, regs: list, memory: dict, stage: int):
+        # Atualiza Labels de Pipeline
         for i, lbl in enumerate(self.stage_labels):
             lbl.setProperty("class", "PipelineStageActive" if i == stage else "PipelineStage")
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
 
+        # Atualiza Registradores com as cores do tema novo
         for i in range(32):
             current_val = regs[i]
             item = self.reg_table.item(i, 2)
