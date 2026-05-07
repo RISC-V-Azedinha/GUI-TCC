@@ -41,7 +41,9 @@ class FPGALoader(QThread):
             elif self.mode == 'halt':
                 self.execute_halt(ser)
             elif self.mode == 'resume':
-                self.execute_resume(ser)   
+                self.execute_resume(ser)
+            elif self.mode == 'step_hw':
+                self.execute_step_hw(ser)
                 
             self.finished.emit(True)
             
@@ -178,3 +180,50 @@ class FPGALoader(QThread):
         ser.write(b'\x02') # CMD_RESUME
         ser.rts = True  # Libera o processador
         self.log_msg.emit("Hardware: Execução Retomada.", "success")
+    
+    def execute_step_hw(self, ser):
+        """Dá um único pulso de clock no hardware e força o retorno ao estado de pausa."""
+        try:
+            # 1. Garante que a CPU está em Halt/Reset antes de tentar o pulso
+            ser.rts = False 
+            time.sleep(0.01)
+            ser.reset_input_buffer() # Limpa lixos da UART para a telemetria vir limpa
+
+            # 2. Envia o comando de pulso único (0x08)
+            # O seu debug_controller.vhd deve disparar apenas um ciclo de enable
+            ser.write(b'\xCA\xFE\xBA\xBE')
+            ser.write(b'\x08') 
+            ser.flush()
+            
+            # 3. SEGURANÇA: Pequeno delay e comando de HALT explícito
+            # Isso ajuda se o hardware não tiver um auto-stop por ciclo
+            time.sleep(0.01) 
+            ser.write(b'\xCA\xFE\xBA\xBE')
+            ser.write(b'\x01') # CMD_HALT
+            ser.flush()
+
+            # 4. Pedimos a telemetria para atualizar a GUI com o estado real do silício
+            ser.write(b'\xCA\xFE\xBA\xBE')
+            ser.write(b'\x10') # CMD_READ_REG
+            
+            # Aguarda os 132 bytes (32 regs + PC)
+            dados = ser.read(132)
+            
+            if len(dados) == 132:
+                regs = []
+                for i in range(32):
+                    val = int.from_bytes(dados[i*4 : i*4+4], 'little')
+                    regs.append(val)
+                
+                pc_val = int.from_bytes(dados[128:132], byteorder='little', signed=False)
+                
+                # Emite o sinal para o Controller sincronizar tudo
+                self.telemetry_update.emit(regs, pc_val)
+            else:
+                self.log_msg.emit(f"Telemetria incompleta no Step: {len(dados)}/132 bytes", "error")
+                
+            # 5. Garante que o sinal físico de controle (RTS) continua travando a CPU
+            ser.rts = False 
+            
+        except Exception as e:
+            self.log_msg.emit(f"Erro no Step Hardware: {str(e)}", "error")

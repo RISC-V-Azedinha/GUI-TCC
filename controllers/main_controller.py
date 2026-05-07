@@ -178,6 +178,8 @@ class MainController:
         self.display_log(f"Sincronizado! Hardware PC: 0x{pc_val:08X}", "success")
 
     def display_log(self, message, msg_type):
+        if "Abrindo porta" in message or "Conectando em" in message:
+            return
         colors = {"error": "#ef4444", "success": "#10b981", "info": "#38bdf8"}
         color = colors.get(msg_type, "#cbd5e1")
         self.view.log(f"[FPGA] {message}", color)
@@ -195,28 +197,24 @@ class MainController:
         self._sync_view()
 
     def handle_step(self):
-        """Um tick manual de clock."""
+        """Um tick manual de clock (Sincronizado: Local + Hardware)."""
         if self.model.halted:
-            if self.run_timer.isActive():
-                self.run_timer.stop()
-                self.view.set_run_state(False)
-                self.view.log(">> Execução Finalizada (Halt Acionado).", "#f59e0b")
             return
-            
+
+        # --- AÇÃO NA FPGA ---
+        # Disparamos o worker em modo step_hw
+        self.fpga_worker.mode = 'step_hw'
+        self.fpga_worker.start()
+
+        # --- AÇÃO NO SIMULADOR LOCAL ---
         success, msg, stage = self.model.clock_tick()
-        self._sync_view()
+        self._sync_view() # Atualiza a UI com o estado do simulador
         
         if msg:
             colors = ["#38bdf8", "#818cf8", "#c084fc", "#f472b6", "#fb923c"]
             color = colors[stage] if 0 <= stage <= 4 else "#cbd5e1"
             self.view.log(msg, color)
-            
-        if not success and not self.model.halted:
-            self.run_timer.stop()
-            self.view.set_run_state(False)
-            self.view.log(">> CRASH: A execução foi interrompida.", "#ef4444")
 
-# No controllers/main_controller.py
 
     def handle_run_toggle(self):
         """Liga ou desliga a execução contínua (Local e Hardware)."""
@@ -257,12 +255,21 @@ class MainController:
         self.fpga_worker.mode = 'sync'
         self.fpga_worker.start()
 
-    def on_telemetry_received(self, regs: list, pc_val: int):
-        """Callback acionado quando o serial_worker termina de ler a UART"""
-        # Atualiza a tabela com os registradores REAIS que vieram no silício
-        self.view.update_hardware_ui(regs, {}, 0) 
-        
-        # Força o Emulador Local a apontar para a mesma linha de código (PC) da placa
-        self.model.pc = pc_val
-        current_line = self.model.get_current_line()
-        self.view.highlight_line(current_line)
+    def on_telemetry_received(self, regs, pc_val):
+        """Callback quando o hardware responde após um Step ou Sync."""
+        # 1. Converte endereço de memória (0, 4, 8) para índice de lista (0, 1, 2)
+        pc_limpo = pc_val & 0xFFFF
+        idx_pc = pc_limpo // 4
+
+        # 2. Valida se o PC existe no simulador antes de aplicar
+        if 0 <= idx_pc < len(self.model.instructions):
+            self.model.pc = idx_pc
+            self.model.regs = regs
+            self.model.stage = 0 # Reseta o estado local para bater com a placa
+        else:
+            # Se o PC for lixo (muito alto), ignora para não quebrar a GUI
+            self.display_log(f"Aviso: PC da placa (0x{pc_val:0X}) fora de alcance.", "error")
+            return
+
+        self.view.update_hardware_ui(regs, self.model.memory, 0)
+        self.view.highlight_line(self.model.get_current_line())
