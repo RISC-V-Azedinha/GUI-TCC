@@ -4,7 +4,6 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer
 from PyQt5.QtGui import QPainter, QPen, QImage, QColor, QPixmap, QFont
 import qtawesome as qta
-import random
 import time
 import numpy as np
 from PIL import Image
@@ -25,6 +24,8 @@ TEXT_SECONDARY = "#8B9BB4"
 NEON_CYAN = "#3b82f6"
 NEON_GREEN = "#5DB373"
 NEON_PURPLE = "#B14AED"
+NEON_RED = "#EF4444"
+NEON_YELLOW = "#F59E0B"
 
 def hex_to_rgba(hex_color, alpha=0.2):
     hex_color = hex_color.lstrip('#')
@@ -65,7 +66,7 @@ class NPUCoreWidget(QFrame):
         self.lbl_title.setStyleSheet(f"background: transparent; color: {NEON_PURPLE}; font-weight: bold; font-size: 12px;")
         texts.addWidget(self.lbl_title)
 
-        self.lbl_status = QLabel("IDLE")
+        self.lbl_status = QLabel("OFFLINE")
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.setStyleSheet(f"background: transparent; color: {TEXT_SECONDARY}; font-weight: 800; font-size: 11px; letter-spacing: 1px;")
         texts.addWidget(self.lbl_status)
@@ -74,11 +75,19 @@ class NPUCoreWidget(QFrame):
     def set_idle(self):
         self.setStyleSheet(f"#NPUCore {{ background-color: transparent; border: 2px dashed {BORDER}; border-radius: 16px; }}")
         if hasattr(self, 'icon_lbl'):
-            self.icon_lbl.setPixmap(qta.icon('fa5s.microchip', color=NEON_PURPLE).pixmap(48, 48))
-            self.lbl_title.setStyleSheet(f"background: transparent; color: {NEON_PURPLE}; font-weight: bold; font-size: 12px;")
-            self.lbl_status.setText("IDLE")
+            self.icon_lbl.setPixmap(qta.icon('fa5s.microchip', color=TEXT_SECONDARY).pixmap(48, 48))
+            self.lbl_title.setStyleSheet(f"background: transparent; color: {TEXT_SECONDARY}; font-weight: bold; font-size: 12px;")
+            self.lbl_status.setText("OFFLINE")
             self.lbl_status.setStyleSheet(f"background: transparent; color: {TEXT_SECONDARY}; font-weight: 800; font-size: 11px; letter-spacing: 1px;")
         self.setGraphicsEffect(None)
+
+    def set_ready(self):
+        self.setStyleSheet(f"#NPUCore {{ background-color: {hex_to_rgba(NEON_PURPLE, 0.05)}; border: 2px dashed {NEON_PURPLE}; border-radius: 16px; }}")
+        self.icon_lbl.setPixmap(qta.icon('fa5s.microchip', color=NEON_PURPLE).pixmap(48, 48))
+        self.lbl_title.setStyleSheet(f"background: transparent; color: {NEON_PURPLE}; font-weight: bold; font-size: 12px;")
+        self.lbl_status.setText("IDLE / READY")
+        self.lbl_status.setStyleSheet(f"background: transparent; color: {NEON_PURPLE}; font-weight: 800; font-size: 11px; letter-spacing: 1px;")
+        add_neon_glow(self, hex_to_rgba(NEON_PURPLE, 0.3), 20)
 
     def set_processing(self):
         self.setStyleSheet(f"#NPUCore {{ background-color: {hex_to_rgba(NEON_CYAN, 0.05)}; border: 2px dashed {NEON_CYAN}; border-radius: 16px; }}")
@@ -134,11 +143,15 @@ class DrawingBoard(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.fillRect(self.rect(), QColor(BG_ELEMENT))
+        # Se estiver desabilitado, desenha um fundo mais escuro
+        bg_color = BG_ELEMENT if self.isEnabled() else BG_MAIN
+        painter.fillRect(self.rect(), QColor(bg_color))
+        
         painter.setPen(QPen(QColor(BORDER), 1, Qt.SolidLine))
         step = 35
         for x in range(0, self.width(), step): painter.drawLine(x, 0, x, self.height())
         for y in range(0, self.height(), step): painter.drawLine(0, y, self.width(), y)
+        
         painter.setPen(QPen(QColor(BORDER), 2, Qt.SolidLine))
         painter.drawRect(0, 0, self.width()-1, self.height()-1)
         painter.drawImage(self.rect(), self.image, self.image.rect())
@@ -151,7 +164,7 @@ class DrawingBoard(QWidget):
 class NNWidget(QWidget):
     def __init__(self):
         super().__init__()
-        self.driver = None # Instância do NPUDriverEdge
+        self.driver = None 
         
         font = QFont("Segoe UI", 10)
         font.setStyleHint(QFont.SansSerif)
@@ -163,7 +176,7 @@ class NNWidget(QWidget):
         main_layout.setSpacing(25)
 
         # =========================================================
-        # CABEÇALHO COM CONTROLES DA FPGA
+        # CABEÇALHO COM CONTROLES DA FPGA E LOADING
         # =========================================================
         header = QHBoxLayout()
         title_icon = QLabel()
@@ -181,6 +194,19 @@ class NNWidget(QWidget):
         title_texts.addWidget(lbl_sub)
         header.addLayout(title_texts)
         header.addStretch()
+
+        # BARRA DE LOADING
+        self.loading_bar = QProgressBar()
+        self.loading_bar.setRange(0, 0) # Indeterminado para animação contínua
+        self.loading_bar.setFixedWidth(150)
+        self.loading_bar.setFixedHeight(8)
+        self.loading_bar.setTextVisible(False)
+        self.loading_bar.setStyleSheet(f"""
+            QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }} 
+            QProgressBar::chunk {{ background-color: {NEON_YELLOW}; border-radius: 4px; }}
+        """)
+        self.loading_bar.setVisible(False)
+        header.addWidget(self.loading_bar)
 
         # INPUT E BOTÃO DE HARDWARE
         self.inp_port = QLineEdit("/dev/ttyUSB1")
@@ -204,12 +230,12 @@ class NNWidget(QWidget):
         workspace.setSpacing(40)
 
         # --- PAINEL ESQUERDO ---
-        left_panel = QFrame()
-        left_panel.setObjectName("PanelEsquerdo")
-        left_panel.setStyleSheet(f"#PanelEsquerdo {{ background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 12px; }}")
-        add_neon_glow(left_panel, hex_to_rgba(NEON_CYAN, 0.1), 40)
+        self.left_panel = QFrame()
+        self.left_panel.setObjectName("PanelEsquerdo")
+        self.left_panel.setStyleSheet(f"#PanelEsquerdo {{ background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 12px; }}")
+        add_neon_glow(self.left_panel, hex_to_rgba(NEON_CYAN, 0.1), 40)
         
-        l_layout = QVBoxLayout(left_panel)
+        l_layout = QVBoxLayout(self.left_panel)
         l_layout.setAlignment(Qt.AlignCenter)
         l_layout.setSpacing(20)
         l_layout.setContentsMargins(30, 30, 30, 30)
@@ -241,20 +267,21 @@ class NNWidget(QWidget):
         self.btn_clear.setStyleSheet(f"""
             QPushButton {{ background-color: {hex_to_rgba(NEON_PURPLE, 0.1)}; color: {NEON_PURPLE}; border: 1px solid {hex_to_rgba(NEON_PURPLE, 0.3)}; border-radius: 6px; font-size: 13px; font-weight: bold; letter-spacing: 1px; }}
             QPushButton:hover {{ background-color: {hex_to_rgba(NEON_PURPLE, 0.2)}; border: 1px solid {NEON_PURPLE}; }}
+            QPushButton:disabled {{ background-color: {BG_ELEMENT}; color: {BORDER}; border: 1px solid {BORDER}; }}
         """)
         self.btn_clear.setCursor(Qt.PointingHandCursor)
         self.btn_clear.clicked.connect(self.clear_ui)
         l_layout.addWidget(self.btn_clear, alignment=Qt.AlignCenter)
 
-        workspace.addWidget(left_panel, stretch=1)
+        workspace.addWidget(self.left_panel, stretch=1)
 
         # --- PAINEL DIREITO ---
-        right_panel = QFrame()
-        right_panel.setObjectName("PanelDireito")
-        right_panel.setStyleSheet(f"#PanelDireito {{ background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 12px; }}")
-        add_neon_glow(right_panel, hex_to_rgba(NEON_CYAN, 0.1), 40)
+        self.right_panel = QFrame()
+        self.right_panel.setObjectName("PanelDireito")
+        self.right_panel.setStyleSheet(f"#PanelDireito {{ background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 12px; }}")
+        add_neon_glow(self.right_panel, hex_to_rgba(NEON_CYAN, 0.1), 40)
         
-        r_layout = QVBoxLayout(right_panel)
+        r_layout = QVBoxLayout(self.right_panel)
         r_layout.setContentsMargins(40, 30, 40, 30)
         r_layout.setSpacing(25)
 
@@ -359,58 +386,115 @@ class NNWidget(QWidget):
         bottom_h_layout.addLayout(bars_layout)
         
         r_layout.addLayout(bottom_h_layout)
-        workspace.addWidget(right_panel, stretch=1)
+        workspace.addWidget(self.right_panel, stretch=1)
         main_layout.addLayout(workspace)
 
-        # BARRA DE STATUS
+        # BARRA DE STATUS MELHORADA
         status_bar = QHBoxLayout()
-        self.lbl_status = QLabel("STATUS: Aguardando Entrada | MODO: Simulador Mock | NPU Desconectada")
-        self.lbl_status.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; font-weight: 600; letter-spacing: 1px; background: transparent;")
+        self.lbl_status = QLabel("Aguardando configuração. Pressione 'Programar FPGA' para enviar o SW e os pesos da NPU.")
+        self.lbl_status.setObjectName("StatusBarText")
+        self.lbl_status.setStyleSheet(f"""
+            #StatusBarText {{
+                color: {NEON_YELLOW}; 
+                font-size: 14px; 
+                font-weight: bold; 
+                letter-spacing: 1px; 
+                background: {BG_ELEMENT};
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+                padding: 10px;
+            }}
+        """)
         status_bar.addWidget(self.lbl_status, alignment=Qt.AlignCenter)
         main_layout.addLayout(status_bar)
+
+        # TRAVAR INTERFACE INICIALMENTE
+        self.lock_interface()
+
+    # -------------------------------------------------------------
+    # GERENCIAMENTO DE ESTADO DA INTERFACE
+    # -------------------------------------------------------------
+    def lock_interface(self):
+        """Desabilita a interação até a FPGA ser configurada."""
+        self.board.setEnabled(False)
+        self.btn_clear.setEnabled(False)
+        self.left_panel.setStyleSheet(f"#PanelEsquerdo {{ background-color: {BG_MAIN}; border: 1px solid {BORDER}; border-radius: 12px; }}")
+        self.left_panel.setGraphicsEffect(None)
+        
+        self.right_panel.setStyleSheet(f"#PanelDireito {{ background-color: {BG_MAIN}; border: 1px solid {BORDER}; border-radius: 12px; }}")
+        self.right_panel.setGraphicsEffect(None)
+
+    def unlock_interface(self):
+        """Libera a interface para desenho e inferência real."""
+        self.board.setEnabled(True)
+        self.btn_clear.setEnabled(True)
+        
+        self.left_panel.setStyleSheet(f"#PanelEsquerdo {{ background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 12px; }}")
+        add_neon_glow(self.left_panel, hex_to_rgba(NEON_CYAN, 0.1), 40)
+        
+        self.right_panel.setStyleSheet(f"#PanelDireito {{ background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 12px; }}")
+        add_neon_glow(self.right_panel, hex_to_rgba(NEON_CYAN, 0.1), 40)
+        
+        self.npu_core.set_ready()
 
     # -------------------------------------------------------------
     # CONTROLE DA FPGA / TREINAMENTO
     # -------------------------------------------------------------
     def start_training(self):
         self.btn_hw.setEnabled(False)
-        self.btn_hw.setText(" Processando...")
-        self.lbl_status.setStyleSheet(f"color: {NEON_CYAN}; font-size: 11px; font-weight: bold; background: transparent;")
+        self.btn_hw.setText(" Transferindo Dados...")
+        self.loading_bar.setVisible(True)
+        
+        # Feedback mais descritivo para o fluxo de hardware
+        self.lbl_status.setStyleSheet(f"color: {NEON_YELLOW}; font-size: 14px; font-weight: bold; background: {BG_ELEMENT}; border: 1px solid {BORDER}; border-radius: 6px; padding: 10px;")
+        self.lbl_status.setText("Enviando Software e Pesos para os registradores (Arquitetura Output Stationary)... ⏳")
         
         port = self.inp_port.text().strip()
         self.worker = HardwareTrainerThread(port)
-        self.worker.progress.connect(lambda msg: self.lbl_status.setText(msg))
+        # Opcional: conectar mensagens da thread para a label
+        self.worker.progress.connect(lambda msg: self.lbl_status.setText(f"Processando: {msg} ⏳"))
         self.worker.finished_success.connect(self.on_training_success)
         self.worker.finished_error.connect(self.on_training_error)
         self.worker.start()
 
     def on_training_success(self, driver):
         self.driver = driver
+        self.loading_bar.setVisible(False)
         self.btn_hw.setEnabled(True)
         self.btn_hw.setText(" SoC Conectado!")
-        self.btn_hw.setStyleSheet(f"background-color: #5DB373; color: {BG_ELEMENT}; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
-        self.lbl_status.setStyleSheet(f"color: {NEON_GREEN}; font-size: 11px; font-weight: bold; background: transparent;")
-        self.lbl_status.setText("STATUS: Treino Finalizado | NPU PRONTA para Inferência Edge (Hardware).")
+        self.btn_hw.setStyleSheet(f"background-color: {NEON_GREEN}; color: {BG_ELEMENT}; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
+        
+        self.lbl_status.setStyleSheet(f"color: {NEON_GREEN}; font-size: 14px; font-weight: bold; background: {BG_ELEMENT}; border: 1px solid {NEON_GREEN}; border-radius: 6px; padding: 10px;")
+        self.lbl_status.setText("FPGA Programada com Sucesso! NPU populada e pronta para inferência. ✅")
+        
+        self.unlock_interface()
 
     def on_training_error(self, err_msg):
+        self.loading_bar.setVisible(False)
         self.btn_hw.setEnabled(True)
-        self.btn_hw.setText(" Flash FPGA & Configurar NPU")
-        self.lbl_status.setStyleSheet(f"color: {RED}; font-size: 11px; font-weight: bold; background: transparent;")
-        self.lbl_status.setText(f"STATUS: FALHA NA COMUNICAÇÃO - {err_msg}")
+        self.btn_hw.setText(" Programar FPGA")
+        
+        self.lbl_status.setStyleSheet(f"color: {NEON_RED}; font-size: 14px; font-weight: bold; background: {BG_ELEMENT}; border: 1px solid {NEON_RED}; border-radius: 6px; padding: 10px;")
+        self.lbl_status.setText(f"Erro de Comunicação: {err_msg} ❌")
 
     # -------------------------------------------------------------
     # EVENTOS DE TEMPO REAL
     # -------------------------------------------------------------
     def on_draw_start(self):
+        if not self.driver:
+            return
         self.npu_core.set_processing()
-        self.lbl_status.setText("STATUS: Capturando Tensores da Interface...")
+        self.lbl_status.setText("Capturando imagem e transferindo via barramento do SoC...")
+        self.lbl_status.setStyleSheet(f"color: {NEON_CYAN}; font-size: 14px; font-weight: bold; background: {BG_ELEMENT}; border: 1px solid {NEON_CYAN}; border-radius: 6px; padding: 10px;")
 
     def on_draw_update(self, image):
-        self._execute_pipeline(image)
+        if self.driver:
+            self._execute_pipeline(image)
 
     def on_draw_finish(self, image):
-        self._execute_pipeline(image)
-        self.npu_core.set_idle()
+        if self.driver:
+            self._execute_pipeline(image)
+            self.npu_core.set_ready()
 
     def _execute_pipeline(self, image):
         base = QImage(self.board.width(), self.board.height(), QImage.Format_RGB32)
@@ -457,22 +541,10 @@ class NNWidget(QWidget):
                 top_digit = int(np.argmax(logits_np))
                 
                 self._update_results(top_digit, probs)
-                self.lbl_status.setText(f"STATUS: Inferência Edge FPGA | PREDIÇÃO: {top_digit} | LATÊNCIA: {latencia:.1f} ms")
+                self.lbl_status.setText(f"Inferência Executada no Hardware | PREDIÇÃO: {top_digit} | LATÊNCIA: {latencia:.1f} ms")
             except Exception as e:
-                self.lbl_status.setText(f"STATUS: ERRO SERIAL - {str(e)}")
-                self._mock_inference()
-        else:
-            self._mock_inference()
-
-    def _mock_inference(self):
-        confs = [random.uniform(0, 5) for _ in range(10)]
-        top_digit = random.randint(0, 9)
-        confs[top_digit] += random.uniform(70, 95) 
-        total = sum(confs)
-        confs = [(c / total) * 100.0 for c in confs]
-
-        self._update_results(top_digit, confs)
-        self.lbl_status.setText("STATUS: Inferência Mockada (Hardware Desconectado). Use o botão superior para Treinar e Ligar.")
+                self.lbl_status.setText(f"Erro ao processar inferência na FPGA: {str(e)} ❌")
+                self.lbl_status.setStyleSheet(f"color: {NEON_RED}; font-size: 14px; font-weight: bold; background: {BG_ELEMENT}; border: 1px solid {NEON_RED}; border-radius: 6px; padding: 10px;")
 
     def _update_results(self, top_digit, confs):
         self.lbl_prediction.setText(str(top_digit))
@@ -499,11 +571,11 @@ class NNWidget(QWidget):
     def clear_ui(self):
         self.board.clear_board()
         self.lbl_npu_preview.clear()
-        self.npu_core.set_idle()
+        
         if self.driver:
-            self.lbl_status.setText("STATUS: Aguardando Entrada | NPU PRONTA para Inferência Edge (Hardware)")
-        else:
-            self.lbl_status.setText("STATUS: Aguardando Entrada | MODO: Simulador Mock | NPU Desconectada")
+            self.npu_core.set_ready()
+            self.lbl_status.setText("Aguardando desenho...")
+            self.lbl_status.setStyleSheet(f"color: {NEON_GREEN}; font-size: 14px; font-weight: bold; background: {BG_ELEMENT}; border: 1px solid {NEON_GREEN}; border-radius: 6px; padding: 10px;")
         
         self.lbl_prediction.setText("?")
         self.lbl_prediction.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 72px; font-weight: 900; background: transparent; border: none;")
