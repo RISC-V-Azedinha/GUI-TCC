@@ -535,8 +535,16 @@ class NNWidget(QWidget):
                 logits = self.driver.inferir(img_npu)
                 latencia = (time.time() - start_t) * 1000
                 
-                logits_np = np.array(logits)
-                exp_logits = np.exp(logits_np - np.max(logits_np))
+                logits_np = np.array(logits, dtype=np.float64)
+
+                # T é a Temperatura. Valores maiores "espalham" mais a incerteza.
+                # Comece testando com 100.0, 500.0 ou 1000.0 dependendo do tamanho bruto 
+                # dos inteiros que saem dos acumuladores da sua NPU.
+                T = 15.0
+                logits_scaled = logits_np / T
+
+                # Softmax com os logits escalonados
+                exp_logits = np.exp(logits_scaled - np.max(logits_scaled))
                 probs = (exp_logits / exp_logits.sum()) * 100.0
                 top_digit = int(np.argmax(logits_np))
                 
