@@ -23,7 +23,7 @@ TEXT_PRIMARY = "#FFFFFF"
 TEXT_SECONDARY = "#8B9BB4"
 
 NEON_CYAN = "#3b82f6"
-NEON_GREEN = "#39FF14"
+NEON_GREEN = "#5DB373"
 NEON_PURPLE = "#B14AED"
 
 def hex_to_rgba(hex_color, alpha=0.2):
@@ -60,7 +60,7 @@ class NPUCoreWidget(QFrame):
 
         texts = QVBoxLayout()
         texts.setSpacing(2)
-        self.lbl_title = QLabel("NPU Core\n(3x3 Systolic)")
+        self.lbl_title = QLabel("NPU Core\n(4x4 Systolic)")
         self.lbl_title.setAlignment(Qt.AlignCenter)
         self.lbl_title.setStyleSheet(f"background: transparent; color: {NEON_PURPLE}; font-weight: bold; font-size: 12px;")
         texts.addWidget(self.lbl_title)
@@ -188,7 +188,7 @@ class NNWidget(QWidget):
         self.inp_port.setStyleSheet(f"background-color: {BG_ELEMENT}; border: 1px solid {BORDER}; border-radius: 4px; color: {NEON_CYAN}; padding: 6px; font-family: monospace; font-weight: bold;")
         header.addWidget(self.inp_port)
 
-        self.btn_hw = QPushButton(" Flash FPGA & Configurar NPU") 
+        self.btn_hw = QPushButton(" Programar FPGA") 
         self.btn_hw.setIcon(qta.icon('fa5s.microchip', color=BG_ELEMENT))
         self.btn_hw.setStyleSheet(f"background-color: {NEON_GREEN}; color: {BG_ELEMENT}; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
         self.btn_hw.setCursor(Qt.PointingHandCursor)
@@ -388,7 +388,7 @@ class NNWidget(QWidget):
         self.driver = driver
         self.btn_hw.setEnabled(True)
         self.btn_hw.setText(" SoC Conectado!")
-        self.btn_hw.setStyleSheet(f"background-color: {NEON_PURPLE}; color: {BG_ELEMENT}; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
+        self.btn_hw.setStyleSheet(f"background-color: #5DB373; color: {BG_ELEMENT}; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
         self.lbl_status.setStyleSheet(f"color: {NEON_GREEN}; font-size: 11px; font-weight: bold; background: transparent;")
         self.lbl_status.setText("STATUS: Treino Finalizado | NPU PRONTA para Inferência Edge (Hardware).")
 
