@@ -1,22 +1,16 @@
 # ui/nn_widget.py
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QFrame, QGridLayout, QProgressBar, QGraphicsDropShadowEffect, QLineEdit)
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer, QThread
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer
 from PyQt5.QtGui import QPainter, QPen, QImage, QColor, QPixmap, QFont
 import qtawesome as qta
 import random
 import time
-import struct
-
-# --- IMPORTS DE MACHINE LEARNING E HARDWARE ---
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
-from PIL import Image, ImageDraw
-import serial
+from PIL import Image
+
+# Importando a Thread de Treinamento extraída
+from core.nn_worker import HardwareTrainerThread
 
 # ==========================================
 # PALETA CYBERPUNK / NEON
@@ -44,145 +38,6 @@ def add_neon_glow(widget, color_hex, blur_radius=30):
     shadow.setYOffset(0)
     shadow.setColor(QColor(color_hex))
     widget.setGraphicsEffect(shadow)
-
-
-# ==============================================================================
-# PYTORCH MODEL, QUANTIZAÇÃO E DRIVER SERIAL
-# ==============================================================================
-class MLP_Model(nn.Module):
-    def __init__(self):
-        super(MLP_Model, self).__init__()
-        self.flatten = nn.Flatten()
-        self.hidden_layer = nn.Linear(28 * 28, 128)
-        self.relu = nn.ReLU()
-        self.output_layer = nn.Linear(128, 10)
-
-    def forward(self, x):
-        x = self.flatten(x)
-        x = self.hidden_layer(x)
-        x = self.relu(x)
-        return self.output_layer(x)
-
-def quantize_tensor(tensor_float, target_dtype, max_val_int):
-    max_abs = np.max(np.abs(tensor_float))
-    scale = max_val_int / max_abs if max_abs > 0 else 1.0
-    tensor_quant = np.round(tensor_float * scale)
-    return np.clip(tensor_quant, -max_val_int, max_val_int).astype(target_dtype), scale
-
-def empacotar_pesos_dma(W_int8):
-    out_features, in_features = W_int8.shape
-    packed_array = []
-    
-    for chunk_start in range(0, out_features, 4):
-        chunk_size = min(4, out_features - chunk_start)
-        for k in range(in_features):
-            w0 = int(W_int8[chunk_start + 0, k]) & 0xFF if chunk_size > 0 else 0
-            w1 = int(W_int8[chunk_start + 1, k]) & 0xFF if chunk_size > 1 else 0
-            w2 = int(W_int8[chunk_start + 2, k]) & 0xFF if chunk_size > 2 else 0
-            w3 = int(W_int8[chunk_start + 3, k]) & 0xFF if chunk_size > 3 else 0
-            val = (w3 << 24) | (w2 << 16) | (w1 << 8) | w0
-            packed_array.append(val)
-    return packed_array
-
-class NPUDriverEdge:
-    def __init__(self, port, baud):
-        self.ser = serial.Serial(port, baud, timeout=2.0)
-        self.ser.reset_input_buffer()
-
-    def upload_modelo(self, w1, b1, w2, b2, progress_cb=None):
-        w1_packed = empacotar_pesos_dma(w1)
-        w2_packed = empacotar_pesos_dma(w2)
-        
-        if progress_cb: progress_cb("A enviar W1 (100 KB)...")
-        self.ser.write(struct.pack('>B', 0xAA))
-        for val in w1_packed: self.ser.write(struct.pack('>I', val & 0xFFFFFFFF))
-        assert self.ser.read(1) == b'A'
-
-        if progress_cb: progress_cb("A enviar B1 (512 Bytes)...")
-        self.ser.write(struct.pack('>B', 0xBB))
-        for val in b1: self.ser.write(struct.pack('>i', val))
-        assert self.ser.read(1) == b'B'
-
-        if progress_cb: progress_cb("A enviar W2 (1.5 KB)...")
-        self.ser.write(struct.pack('>B', 0xCC))
-        for val in w2_packed: self.ser.write(struct.pack('>I', val & 0xFFFFFFFF))
-        assert self.ser.read(1) == b'C'
-
-        if progress_cb: progress_cb("A enviar B2...")
-        b2_padded = np.pad(b2, (0, 12 - len(b2)), mode='constant')
-        self.ser.write(struct.pack('>B', 0xDD))
-        for val in b2_padded: self.ser.write(struct.pack('>i', val))
-        assert self.ser.read(1) == b'D'
-        
-    def inferir(self, image_int8):
-        self.ser.write(struct.pack('>B', 0xFF))
-        self.ser.write(image_int8.tobytes())
-        res = self.ser.read(10)
-        return struct.unpack('>10b', res)
-
-    def close(self): 
-        if self.ser and self.ser.is_open:
-            self.ser.close()
-
-# --- WORKER DE TREINAMENTO EM BACKGROUND ---
-class HardwareTrainerThread(QThread):
-    progress = pyqtSignal(str)
-    finished_success = pyqtSignal(object)
-    finished_error = pyqtSignal(str)
-
-    def __init__(self, port):
-        super().__init__()
-        self.port = port
-
-    def run(self):
-        try:
-            self.progress.emit("STATUS: A baixar/carregar MNIST Dataset...")
-            transform = transforms.Compose([transforms.ToTensor()])
-            train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-            train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-            
-            model = MLP_Model()
-            criterion = nn.CrossEntropyLoss()
-            optimizer = optim.Adam(model.parameters(), lr=0.002)
-            scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
-
-            epochs = 15
-            for epoch in range(epochs):
-                model.train()
-                running_loss = 0.0
-                for images, labels in train_loader:
-                    optimizer.zero_grad()
-                    loss = criterion(model(images), labels)
-                    loss.backward()
-                    optimizer.step()
-                    running_loss += loss.item()
-                    
-                scheduler.step()
-                self.progress.emit(f"STATUS: Treinando PyTorch (Época {epoch+1}/{epochs}) - Loss: {running_loss/len(train_loader):.4f}")
-
-            self.progress.emit("STATUS: Quantizando Modelo para INT8/INT32...")
-            model.eval()
-            with torch.no_grad():
-                w1_float, b1_float = model.hidden_layer.weight.numpy(), model.hidden_layer.bias.numpy()
-                w2_float, b2_float = model.output_layer.weight.numpy(), model.output_layer.bias.numpy()
-
-            w1_int8, scale_w1 = quantize_tensor(w1_float, np.int8, 127)
-            w2_int8, scale_w2 = quantize_tensor(w2_float, np.int8, 127)
-            b1_int32 = np.round(b1_float * scale_w1 * 255.0).astype(np.int32)
-            b2_int32 = np.round(b2_float * scale_w2 * 127.0).astype(np.int32)
-
-            self.progress.emit(f"STATUS: Conectando à FPGA ({self.port})...")
-            driver = NPUDriverEdge(self.port, 921600)
-
-            self.progress.emit("STATUS: Upload via DMA em progresso...")
-            driver.upload_modelo(w1_int8, b1_int32, w2_int8, b2_int32, lambda msg: self.progress.emit(f"STATUS: {msg}"))
-
-            self.progress.emit("STATUS: Rede armazenada com sucesso no SoC!")
-            self.finished_success.emit(driver)
-
-        except Exception as e:
-            self.finished_error.emit(str(e))
-
 
 # ==========================================
 # COMPONENTES VISUAIS DA UI
@@ -333,7 +188,7 @@ class NNWidget(QWidget):
         self.inp_port.setStyleSheet(f"background-color: {BG_ELEMENT}; border: 1px solid {BORDER}; border-radius: 4px; color: {NEON_CYAN}; padding: 6px; font-family: monospace; font-weight: bold;")
         header.addWidget(self.inp_port)
 
-        self.btn_hw = QPushButton(" Treinar PyTorch & Enviar p/ NPU")
+        self.btn_hw = QPushButton(" Flash FPGA & Configurar NPU") 
         self.btn_hw.setIcon(qta.icon('fa5s.microchip', color=BG_ELEMENT))
         self.btn_hw.setStyleSheet(f"background-color: {NEON_GREEN}; color: {BG_ELEMENT}; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
         self.btn_hw.setCursor(Qt.PointingHandCursor)
@@ -539,9 +394,9 @@ class NNWidget(QWidget):
 
     def on_training_error(self, err_msg):
         self.btn_hw.setEnabled(True)
-        self.btn_hw.setText(" Treinar PyTorch & Enviar p/ NPU")
+        self.btn_hw.setText(" Flash FPGA & Configurar NPU")
         self.lbl_status.setStyleSheet(f"color: {RED}; font-size: 11px; font-weight: bold; background: transparent;")
-        self.lbl_status.setText(f"STATUS: FALHA NA COMUNICAÇÃO SERIAL - {err_msg}")
+        self.lbl_status.setText(f"STATUS: FALHA NA COMUNICAÇÃO - {err_msg}")
 
     # -------------------------------------------------------------
     # EVENTOS DE TEMPO REAL
@@ -558,8 +413,6 @@ class NNWidget(QWidget):
         self.npu_core.set_idle()
 
     def _execute_pipeline(self, image):
-        """Prepara imagem, exibe preview e executa a predição real ou emulação"""
-        # 1. Preview Rendering
         base = QImage(self.board.width(), self.board.height(), QImage.Format_RGB32)
         base.fill(Qt.black)
         painter = QPainter(base)
@@ -570,11 +423,10 @@ class NNWidget(QWidget):
         preview_img = small_img.scaled(140, 140, Qt.IgnoreAspectRatio, Qt.FastTransformation)
         self.lbl_npu_preview.setPixmap(QPixmap.fromImage(preview_img))
         
-        # 2. Extracção de Imagem Perfeita P&B
         ptr = image.bits()
         ptr.setsize(image.byteCount())
         arr = np.array(ptr).reshape(image.height(), image.width(), 4)
-        alpha = arr[:, :, 3] # Pega o canal Alpha (transparência/traço)
+        alpha = arr[:, :, 3]
         
         pil_img = Image.fromarray(alpha, mode='L')
         bbox = pil_img.getbbox()
@@ -583,7 +435,6 @@ class NNWidget(QWidget):
             self.clear_ui()
             return
 
-        # 3. Crop e Pre-processamento (Igual ao seu EdgeAI_App)
         img_cropped = pil_img.crop(bbox)
         width, height = img_cropped.size
         ratio = 20.0 / max(width, height)
@@ -594,14 +445,12 @@ class NNWidget(QWidget):
         img_28x28.paste(img_resized, ((28 - new_width) // 2, (28 - new_height) // 2))
         img_npu = np.clip(np.array(img_28x28).flatten() // 2, 0, 127).astype(np.int8)
 
-        # 4. Envia pro Hardware ou Simula Local
         if self.driver:
             try:
                 start_t = time.time()
                 logits = self.driver.inferir(img_npu)
                 latencia = (time.time() - start_t) * 1000
                 
-                # Transformando logits em probabilidades reais usando Softmax
                 logits_np = np.array(logits)
                 exp_logits = np.exp(logits_np - np.max(logits_np))
                 probs = (exp_logits / exp_logits.sum()) * 100.0
