@@ -1,10 +1,22 @@
 # ui/nn_widget.py
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QFrame, QGridLayout, QProgressBar, QGraphicsDropShadowEffect)
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer
+                             QLabel, QFrame, QGridLayout, QProgressBar, QGraphicsDropShadowEffect, QLineEdit)
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer, QThread
 from PyQt5.QtGui import QPainter, QPen, QImage, QColor, QPixmap, QFont
 import qtawesome as qta
 import random
+import time
+import struct
+
+# --- IMPORTS DE MACHINE LEARNING E HARDWARE ---
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+from PIL import Image, ImageDraw
+import serial
 
 # ==========================================
 # PALETA CYBERPUNK / NEON
@@ -33,11 +45,149 @@ def add_neon_glow(widget, color_hex, blur_radius=30):
     shadow.setColor(QColor(color_hex))
     widget.setGraphicsEffect(shadow)
 
+
+# ==============================================================================
+# PYTORCH MODEL, QUANTIZAÇÃO E DRIVER SERIAL
+# ==============================================================================
+class MLP_Model(nn.Module):
+    def __init__(self):
+        super(MLP_Model, self).__init__()
+        self.flatten = nn.Flatten()
+        self.hidden_layer = nn.Linear(28 * 28, 128)
+        self.relu = nn.ReLU()
+        self.output_layer = nn.Linear(128, 10)
+
+    def forward(self, x):
+        x = self.flatten(x)
+        x = self.hidden_layer(x)
+        x = self.relu(x)
+        return self.output_layer(x)
+
+def quantize_tensor(tensor_float, target_dtype, max_val_int):
+    max_abs = np.max(np.abs(tensor_float))
+    scale = max_val_int / max_abs if max_abs > 0 else 1.0
+    tensor_quant = np.round(tensor_float * scale)
+    return np.clip(tensor_quant, -max_val_int, max_val_int).astype(target_dtype), scale
+
+def empacotar_pesos_dma(W_int8):
+    out_features, in_features = W_int8.shape
+    packed_array = []
+    
+    for chunk_start in range(0, out_features, 4):
+        chunk_size = min(4, out_features - chunk_start)
+        for k in range(in_features):
+            w0 = int(W_int8[chunk_start + 0, k]) & 0xFF if chunk_size > 0 else 0
+            w1 = int(W_int8[chunk_start + 1, k]) & 0xFF if chunk_size > 1 else 0
+            w2 = int(W_int8[chunk_start + 2, k]) & 0xFF if chunk_size > 2 else 0
+            w3 = int(W_int8[chunk_start + 3, k]) & 0xFF if chunk_size > 3 else 0
+            val = (w3 << 24) | (w2 << 16) | (w1 << 8) | w0
+            packed_array.append(val)
+    return packed_array
+
+class NPUDriverEdge:
+    def __init__(self, port, baud):
+        self.ser = serial.Serial(port, baud, timeout=2.0)
+        self.ser.reset_input_buffer()
+
+    def upload_modelo(self, w1, b1, w2, b2, progress_cb=None):
+        w1_packed = empacotar_pesos_dma(w1)
+        w2_packed = empacotar_pesos_dma(w2)
+        
+        if progress_cb: progress_cb("A enviar W1 (100 KB)...")
+        self.ser.write(struct.pack('>B', 0xAA))
+        for val in w1_packed: self.ser.write(struct.pack('>I', val & 0xFFFFFFFF))
+        assert self.ser.read(1) == b'A'
+
+        if progress_cb: progress_cb("A enviar B1 (512 Bytes)...")
+        self.ser.write(struct.pack('>B', 0xBB))
+        for val in b1: self.ser.write(struct.pack('>i', val))
+        assert self.ser.read(1) == b'B'
+
+        if progress_cb: progress_cb("A enviar W2 (1.5 KB)...")
+        self.ser.write(struct.pack('>B', 0xCC))
+        for val in w2_packed: self.ser.write(struct.pack('>I', val & 0xFFFFFFFF))
+        assert self.ser.read(1) == b'C'
+
+        if progress_cb: progress_cb("A enviar B2...")
+        b2_padded = np.pad(b2, (0, 12 - len(b2)), mode='constant')
+        self.ser.write(struct.pack('>B', 0xDD))
+        for val in b2_padded: self.ser.write(struct.pack('>i', val))
+        assert self.ser.read(1) == b'D'
+        
+    def inferir(self, image_int8):
+        self.ser.write(struct.pack('>B', 0xFF))
+        self.ser.write(image_int8.tobytes())
+        res = self.ser.read(10)
+        return struct.unpack('>10b', res)
+
+    def close(self): 
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+
+# --- WORKER DE TREINAMENTO EM BACKGROUND ---
+class HardwareTrainerThread(QThread):
+    progress = pyqtSignal(str)
+    finished_success = pyqtSignal(object)
+    finished_error = pyqtSignal(str)
+
+    def __init__(self, port):
+        super().__init__()
+        self.port = port
+
+    def run(self):
+        try:
+            self.progress.emit("STATUS: A baixar/carregar MNIST Dataset...")
+            transform = transforms.Compose([transforms.ToTensor()])
+            train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+            train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+            
+            model = MLP_Model()
+            criterion = nn.CrossEntropyLoss()
+            optimizer = optim.Adam(model.parameters(), lr=0.002)
+            scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+
+            epochs = 15
+            for epoch in range(epochs):
+                model.train()
+                running_loss = 0.0
+                for images, labels in train_loader:
+                    optimizer.zero_grad()
+                    loss = criterion(model(images), labels)
+                    loss.backward()
+                    optimizer.step()
+                    running_loss += loss.item()
+                    
+                scheduler.step()
+                self.progress.emit(f"STATUS: Treinando PyTorch (Época {epoch+1}/{epochs}) - Loss: {running_loss/len(train_loader):.4f}")
+
+            self.progress.emit("STATUS: Quantizando Modelo para INT8/INT32...")
+            model.eval()
+            with torch.no_grad():
+                w1_float, b1_float = model.hidden_layer.weight.numpy(), model.hidden_layer.bias.numpy()
+                w2_float, b2_float = model.output_layer.weight.numpy(), model.output_layer.bias.numpy()
+
+            w1_int8, scale_w1 = quantize_tensor(w1_float, np.int8, 127)
+            w2_int8, scale_w2 = quantize_tensor(w2_float, np.int8, 127)
+            b1_int32 = np.round(b1_float * scale_w1 * 255.0).astype(np.int32)
+            b2_int32 = np.round(b2_float * scale_w2 * 127.0).astype(np.int32)
+
+            self.progress.emit(f"STATUS: Conectando à FPGA ({self.port})...")
+            driver = NPUDriverEdge(self.port, 921600)
+
+            self.progress.emit("STATUS: Upload via DMA em progresso...")
+            driver.upload_modelo(w1_int8, b1_int32, w2_int8, b2_int32, lambda msg: self.progress.emit(f"STATUS: {msg}"))
+
+            self.progress.emit("STATUS: Rede armazenada com sucesso no SoC!")
+            self.finished_success.emit(driver)
+
+        except Exception as e:
+            self.finished_error.emit(str(e))
+
+
 # ==========================================
-# COMPONENTES CUSTOMIZADOS
+# COMPONENTES VISUAIS DA UI
 # ==========================================
 class NPUCoreWidget(QFrame):
-    """Componente visual que simula o chip da NPU processando."""
     def __init__(self):
         super().__init__()
         self.setFixedSize(160, 160)
@@ -64,17 +214,10 @@ class NPUCoreWidget(QFrame):
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.setStyleSheet(f"background: transparent; color: {TEXT_SECONDARY}; font-weight: 800; font-size: 11px; letter-spacing: 1px;")
         texts.addWidget(self.lbl_status)
-        
         layout.addLayout(texts)
 
     def set_idle(self):
-        self.setStyleSheet(f"""
-            #NPUCore {{
-                background-color: transparent;
-                border: 2px dashed {BORDER};
-                border-radius: 16px;
-            }}
-        """)
+        self.setStyleSheet(f"#NPUCore {{ background-color: transparent; border: 2px dashed {BORDER}; border-radius: 16px; }}")
         if hasattr(self, 'icon_lbl'):
             self.icon_lbl.setPixmap(qta.icon('fa5s.microchip', color=NEON_PURPLE).pixmap(48, 48))
             self.lbl_title.setStyleSheet(f"background: transparent; color: {NEON_PURPLE}; font-weight: bold; font-size: 12px;")
@@ -83,13 +226,7 @@ class NPUCoreWidget(QFrame):
         self.setGraphicsEffect(None)
 
     def set_processing(self):
-        self.setStyleSheet(f"""
-            #NPUCore {{
-                background-color: {hex_to_rgba(NEON_CYAN, 0.05)};
-                border: 2px dashed {NEON_CYAN};
-                border-radius: 16px;
-            }}
-        """)
+        self.setStyleSheet(f"#NPUCore {{ background-color: {hex_to_rgba(NEON_CYAN, 0.05)}; border: 2px dashed {NEON_CYAN}; border-radius: 16px; }}")
         self.icon_lbl.setPixmap(qta.icon('fa5s.microchip', color=NEON_CYAN).pixmap(48, 48))
         self.lbl_title.setStyleSheet(f"background: transparent; color: {NEON_CYAN}; font-weight: bold; font-size: 12px;")
         self.lbl_status.setText("PROCESSING...")
@@ -97,7 +234,6 @@ class NPUCoreWidget(QFrame):
         add_neon_glow(self, hex_to_rgba(NEON_CYAN, 0.6), 25)
 
 class DrawingBoard(QWidget):
-    """Lousa interativa com grade de fundo e amostragem em tempo real."""
     drawing_started = pyqtSignal()
     drawing_updated = pyqtSignal(QImage)
     drawing_finished = pyqtSignal(QImage)
@@ -106,14 +242,11 @@ class DrawingBoard(QWidget):
         super().__init__()
         self.setFixedSize(size, size)
         self.setCursor(Qt.CrossCursor)
-        
         self.image = QImage(self.size(), QImage.Format_ARGB32)
         self.image.fill(Qt.transparent)
-        
         self.drawing = False
         self.last_point = QPoint()
 
-        # Timer para inferência em tempo real (150ms)
         self.sample_timer = QTimer()
         self.sample_timer.timeout.connect(self.emit_update)
 
@@ -122,7 +255,7 @@ class DrawingBoard(QWidget):
             self.drawing = True
             self.last_point = event.pos()
             self.drawing_started.emit()
-            self.sample_timer.start(150) # Dispara atualização a cada 150ms
+            self.sample_timer.start(150)
 
     def mouseMoveEvent(self, event):
         if (event.buttons() & Qt.LeftButton) and self.drawing:
@@ -146,18 +279,13 @@ class DrawingBoard(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        
         painter.fillRect(self.rect(), QColor(BG_ELEMENT))
         painter.setPen(QPen(QColor(BORDER), 1, Qt.SolidLine))
         step = 35
-        for x in range(0, self.width(), step):
-            painter.drawLine(x, 0, x, self.height())
-        for y in range(0, self.height(), step):
-            painter.drawLine(0, y, self.width(), y)
-            
+        for x in range(0, self.width(), step): painter.drawLine(x, 0, x, self.height())
+        for y in range(0, self.height(), step): painter.drawLine(0, y, self.width(), y)
         painter.setPen(QPen(QColor(BORDER), 2, Qt.SolidLine))
         painter.drawRect(0, 0, self.width()-1, self.height()-1)
-
         painter.drawImage(self.rect(), self.image, self.image.rect())
 
     def clear_board(self):
@@ -168,6 +296,7 @@ class DrawingBoard(QWidget):
 class NNWidget(QWidget):
     def __init__(self):
         super().__init__()
+        self.driver = None # Instância do NPUDriverEdge
         
         font = QFont("Segoe UI", 10)
         font.setStyleHint(QFont.SansSerif)
@@ -179,12 +308,11 @@ class NNWidget(QWidget):
         main_layout.setSpacing(25)
 
         # =========================================================
-        # CABEÇALHO
+        # CABEÇALHO COM CONTROLES DA FPGA
         # =========================================================
         header = QHBoxLayout()
         title_icon = QLabel()
         title_icon.setPixmap(qta.icon('fa5s.network-wired', color=NEON_PURPLE).pixmap(28, 28))
-        # Correção 1: Garantindo que o ícone fique transparente
         title_icon.setStyleSheet("background: transparent; border: none;")
         header.addWidget(title_icon)
         
@@ -192,12 +320,26 @@ class NNWidget(QWidget):
         title_texts.setSpacing(2)
         lbl_title = QLabel("Neural Network Inference (MNIST)")
         lbl_title.setStyleSheet(f"font-size: 22px; font-weight: 800; color: {TEXT_PRIMARY}; background: transparent;")
-        lbl_sub = QLabel("Reconhecimento de Dígitos usando a NPU (28x28 Input)")
+        lbl_sub = QLabel("Treino Local (PyTorch) + Aceleração em Hardware (SoC RISC-V)")
         lbl_sub.setStyleSheet(f"font-size: 13px; color: {TEXT_SECONDARY}; font-weight: 500; background: transparent;")
         title_texts.addWidget(lbl_title)
         title_texts.addWidget(lbl_sub)
         header.addLayout(title_texts)
         header.addStretch()
+
+        # INPUT E BOTÃO DE HARDWARE
+        self.inp_port = QLineEdit("/dev/ttyUSB1")
+        self.inp_port.setFixedWidth(130)
+        self.inp_port.setStyleSheet(f"background-color: {BG_ELEMENT}; border: 1px solid {BORDER}; border-radius: 4px; color: {NEON_CYAN}; padding: 6px; font-family: monospace; font-weight: bold;")
+        header.addWidget(self.inp_port)
+
+        self.btn_hw = QPushButton(" Treinar PyTorch & Enviar p/ NPU")
+        self.btn_hw.setIcon(qta.icon('fa5s.microchip', color=BG_ELEMENT))
+        self.btn_hw.setStyleSheet(f"background-color: {NEON_GREEN}; color: {BG_ELEMENT}; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
+        self.btn_hw.setCursor(Qt.PointingHandCursor)
+        self.btn_hw.clicked.connect(self.start_training)
+        header.addWidget(self.btn_hw)
+        
         main_layout.addLayout(header)
 
         # =========================================================
@@ -233,30 +375,17 @@ class NNWidget(QWidget):
         l_layout.addLayout(draw_header_layout)
 
         self.board = DrawingBoard(size=420)
-        # Sinais para amostragem em tempo real
         self.board.drawing_started.connect(self.on_draw_start)
         self.board.drawing_updated.connect(self.on_draw_update)
         self.board.drawing_finished.connect(self.on_draw_finish)
-        
         l_layout.addWidget(self.board, alignment=Qt.AlignCenter)
 
         self.btn_clear = QPushButton(" LIMPAR LOUSA")
         self.btn_clear.setIcon(qta.icon('fa5s.eraser', color=NEON_PURPLE))
         self.btn_clear.setFixedSize(420, 48)
         self.btn_clear.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {hex_to_rgba(NEON_PURPLE, 0.1)}; 
-                color: {NEON_PURPLE}; 
-                border: 1px solid {hex_to_rgba(NEON_PURPLE, 0.3)}; 
-                border-radius: 6px; 
-                font-size: 13px;
-                font-weight: bold;
-                letter-spacing: 1px;
-            }}
-            QPushButton:hover {{ 
-                background-color: {hex_to_rgba(NEON_PURPLE, 0.2)}; 
-                border: 1px solid {NEON_PURPLE};
-            }}
+            QPushButton {{ background-color: {hex_to_rgba(NEON_PURPLE, 0.1)}; color: {NEON_PURPLE}; border: 1px solid {hex_to_rgba(NEON_PURPLE, 0.3)}; border-radius: 6px; font-size: 13px; font-weight: bold; letter-spacing: 1px; }}
+            QPushButton:hover {{ background-color: {hex_to_rgba(NEON_PURPLE, 0.2)}; border: 1px solid {NEON_PURPLE}; }}
         """)
         self.btn_clear.setCursor(Qt.PointingHandCursor)
         self.btn_clear.clicked.connect(self.clear_ui)
@@ -301,7 +430,6 @@ class NNWidget(QWidget):
 
         self.npu_core = NPUCoreWidget()
         top_r_layout.addWidget(self.npu_core)
-
         r_layout.addLayout(top_r_layout)
 
         line = QFrame()
@@ -309,28 +437,21 @@ class NNWidget(QWidget):
         line.setStyleSheet(f"border: none; background-color: {BORDER}; max-height: 1px;")
         r_layout.addWidget(line)
 
-        # Bottom Direito (Resultado e Barras)
         bottom_h_layout = QHBoxLayout()
         bottom_h_layout.setSpacing(40)
 
         # Círculo de Previsão
         pred_layout = QVBoxLayout()
-        # Correção 2: Empurra o título para o topo do container
         pred_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter) 
         lbl_pred_title = QLabel("PREVISÃO")
         lbl_pred_title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; font-weight: 700; background: transparent;")
         lbl_pred_title.setAlignment(Qt.AlignCenter)
         pred_layout.addWidget(lbl_pred_title)
-        
-        pred_layout.addSpacing(15) # Espaço controlado em vez de elástico
+        pred_layout.addSpacing(15)
 
         self.pred_circle = QFrame()
         self.pred_circle.setFixedSize(140, 140)
-        self.pred_circle.setStyleSheet(f"""
-            background-color: {hex_to_rgba(BORDER, 0.2)};
-            border: 3px solid {BORDER};
-            border-radius: 70px;
-        """)
+        self.pred_circle.setStyleSheet(f"background-color: {hex_to_rgba(BORDER, 0.2)}; border: 3px solid {BORDER}; border-radius: 70px;")
         circle_layout = QVBoxLayout(self.pred_circle)
         self.lbl_prediction = QLabel("?")
         self.lbl_prediction.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 72px; font-weight: 900; background: transparent; border: none;")
@@ -342,14 +463,12 @@ class NNWidget(QWidget):
 
         # Barras de Confiança
         bars_layout = QVBoxLayout()
-        # Correção 2: Empurra o título para o topo do container
         bars_layout.setAlignment(Qt.AlignTop) 
         lbl_conf_title = QLabel("CONFIANÇA")
         lbl_conf_title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; font-weight: 700; background: transparent;")
         lbl_conf_title.setAlignment(Qt.AlignCenter)
         bars_layout.addWidget(lbl_conf_title)
-        
-        bars_layout.addSpacing(15) # Espaço controlado
+        bars_layout.addSpacing(15)
 
         conf_container = QWidget()
         conf_container.setStyleSheet("background: transparent;")
@@ -369,10 +488,7 @@ class NNWidget(QWidget):
             bar.setValue(0)
             bar.setTextVisible(False)
             bar.setFixedHeight(8)
-            bar.setStyleSheet(f"""
-                QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }}
-                QProgressBar::chunk {{ background-color: {BORDER}; border-radius: 4px; }}
-            """)
+            bar.setStyleSheet(f"QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }} QProgressBar::chunk {{ background-color: {BORDER}; border-radius: 4px; }}")
             
             lbl_pct = QLabel("0.0%")
             lbl_pct.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: bold; font-size: 11px; background: transparent;")
@@ -391,21 +507,48 @@ class NNWidget(QWidget):
         workspace.addWidget(right_panel, stretch=1)
         main_layout.addLayout(workspace)
 
-        # =========================================================
         # BARRA DE STATUS
-        # =========================================================
         status_bar = QHBoxLayout()
-        self.lbl_status = QLabel("STATUS: Aguardando Entrada | NPU PRONTA | MODELO: MNIST-v4.1")
+        self.lbl_status = QLabel("STATUS: Aguardando Entrada | MODO: Simulador Mock | NPU Desconectada")
         self.lbl_status.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px; font-weight: 600; letter-spacing: 1px; background: transparent;")
         status_bar.addWidget(self.lbl_status, alignment=Qt.AlignCenter)
         main_layout.addLayout(status_bar)
+
+    # -------------------------------------------------------------
+    # CONTROLE DA FPGA / TREINAMENTO
+    # -------------------------------------------------------------
+    def start_training(self):
+        self.btn_hw.setEnabled(False)
+        self.btn_hw.setText(" Processando...")
+        self.lbl_status.setStyleSheet(f"color: {NEON_CYAN}; font-size: 11px; font-weight: bold; background: transparent;")
+        
+        port = self.inp_port.text().strip()
+        self.worker = HardwareTrainerThread(port)
+        self.worker.progress.connect(lambda msg: self.lbl_status.setText(msg))
+        self.worker.finished_success.connect(self.on_training_success)
+        self.worker.finished_error.connect(self.on_training_error)
+        self.worker.start()
+
+    def on_training_success(self, driver):
+        self.driver = driver
+        self.btn_hw.setEnabled(True)
+        self.btn_hw.setText(" SoC Conectado!")
+        self.btn_hw.setStyleSheet(f"background-color: {NEON_PURPLE}; color: {BG_ELEMENT}; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
+        self.lbl_status.setStyleSheet(f"color: {NEON_GREEN}; font-size: 11px; font-weight: bold; background: transparent;")
+        self.lbl_status.setText("STATUS: Treino Finalizado | NPU PRONTA para Inferência Edge (Hardware).")
+
+    def on_training_error(self, err_msg):
+        self.btn_hw.setEnabled(True)
+        self.btn_hw.setText(" Treinar PyTorch & Enviar p/ NPU")
+        self.lbl_status.setStyleSheet(f"color: {RED}; font-size: 11px; font-weight: bold; background: transparent;")
+        self.lbl_status.setText(f"STATUS: FALHA NA COMUNICAÇÃO SERIAL - {err_msg}")
 
     # -------------------------------------------------------------
     # EVENTOS DE TEMPO REAL
     # -------------------------------------------------------------
     def on_draw_start(self):
         self.npu_core.set_processing()
-        self.lbl_status.setText("STATUS: Capturando e Processando Tensores em Tempo Real...")
+        self.lbl_status.setText("STATUS: Capturando Tensores da Interface...")
 
     def on_draw_update(self, image):
         self._execute_pipeline(image)
@@ -413,10 +556,10 @@ class NNWidget(QWidget):
     def on_draw_finish(self, image):
         self._execute_pipeline(image)
         self.npu_core.set_idle()
-        self.lbl_status.setText("STATUS: Inferência Concluída | TEMPO: 0.08s | MODELO: MNIST-v4.1")
 
     def _execute_pipeline(self, image):
-        """Prepara imagem, exibe preview e executa a predição (instantânea)"""
+        """Prepara imagem, exibe preview e executa a predição real ou emulação"""
+        # 1. Preview Rendering
         base = QImage(self.board.width(), self.board.height(), QImage.Format_RGB32)
         base.fill(Qt.black)
         painter = QPainter(base)
@@ -427,60 +570,95 @@ class NNWidget(QWidget):
         preview_img = small_img.scaled(140, 140, Qt.IgnoreAspectRatio, Qt.FastTransformation)
         self.lbl_npu_preview.setPixmap(QPixmap.fromImage(preview_img))
         
-        self._mock_inference()
+        # 2. Extracção de Imagem Perfeita P&B
+        ptr = image.bits()
+        ptr.setsize(image.byteCount())
+        arr = np.array(ptr).reshape(image.height(), image.width(), 4)
+        alpha = arr[:, :, 3] # Pega o canal Alpha (transparência/traço)
+        
+        pil_img = Image.fromarray(alpha, mode='L')
+        bbox = pil_img.getbbox()
+        
+        if not bbox:
+            self.clear_ui()
+            return
+
+        # 3. Crop e Pre-processamento (Igual ao seu EdgeAI_App)
+        img_cropped = pil_img.crop(bbox)
+        width, height = img_cropped.size
+        ratio = 20.0 / max(width, height)
+        new_width, new_height = int(width * ratio), int(height * ratio)
+
+        img_resized = img_cropped.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        img_28x28 = Image.new("L", (28, 28), color=0)
+        img_28x28.paste(img_resized, ((28 - new_width) // 2, (28 - new_height) // 2))
+        img_npu = np.clip(np.array(img_28x28).flatten() // 2, 0, 127).astype(np.int8)
+
+        # 4. Envia pro Hardware ou Simula Local
+        if self.driver:
+            try:
+                start_t = time.time()
+                logits = self.driver.inferir(img_npu)
+                latencia = (time.time() - start_t) * 1000
+                
+                # Transformando logits em probabilidades reais usando Softmax
+                logits_np = np.array(logits)
+                exp_logits = np.exp(logits_np - np.max(logits_np))
+                probs = (exp_logits / exp_logits.sum()) * 100.0
+                top_digit = int(np.argmax(logits_np))
+                
+                self._update_results(top_digit, probs)
+                self.lbl_status.setText(f"STATUS: Inferência Edge FPGA | PREDIÇÃO: {top_digit} | LATÊNCIA: {latencia:.1f} ms")
+            except Exception as e:
+                self.lbl_status.setText(f"STATUS: ERRO SERIAL - {str(e)}")
+                self._mock_inference()
+        else:
+            self._mock_inference()
 
     def _mock_inference(self):
         confs = [random.uniform(0, 5) for _ in range(10)]
         top_digit = random.randint(0, 9)
         confs[top_digit] += random.uniform(70, 95) 
         total = sum(confs)
-        confs = [(c / total) * 100 for c in confs]
+        confs = [(c / total) * 100.0 for c in confs]
 
+        self._update_results(top_digit, confs)
+        self.lbl_status.setText("STATUS: Inferência Mockada (Hardware Desconectado). Use o botão superior para Treinar e Ligar.")
+
+    def _update_results(self, top_digit, confs):
         self.lbl_prediction.setText(str(top_digit))
         self.lbl_prediction.setStyleSheet(f"color: {NEON_CYAN}; font-size: 72px; font-weight: 900; background: transparent; border: none;")
-        self.pred_circle.setStyleSheet(f"""
-            background-color: {hex_to_rgba(NEON_CYAN, 0.1)};
-            border: 3px solid {NEON_CYAN};
-            border-radius: 70px;
-        """)
+        self.pred_circle.setStyleSheet(f"background-color: {hex_to_rgba(NEON_CYAN, 0.1)}; border: 3px solid {NEON_CYAN}; border-radius: 70px;")
         add_neon_glow(self.pred_circle, hex_to_rgba(NEON_CYAN, 0.5), 20)
         
         for i in range(10):
             lbl_digit, bar, lbl_pct = self.conf_bars[i]
             val = confs[i]
-            
             bar.setValue(int(val * 10))
             lbl_pct.setText(f"{val:.1f}%")
             
             if i == top_digit:
                 lbl_digit.setStyleSheet(f"color: {NEON_CYAN}; font-weight: 900; font-size: 15px; background: transparent;")
                 lbl_pct.setStyleSheet(f"color: {NEON_CYAN}; font-weight: bold; font-size: 11px; background: transparent;")
-                bar.setStyleSheet(f"""
-                    QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }}
-                    QProgressBar::chunk {{ background-color: {NEON_CYAN}; border-radius: 4px; }}
-                """)
+                bar.setStyleSheet(f"QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }} QProgressBar::chunk {{ background-color: {NEON_CYAN}; border-radius: 4px; }}")
             else:
                 lbl_digit.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 800; font-size: 14px; background: transparent;")
                 lbl_pct.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: bold; font-size: 11px; background: transparent;")
                 cor_barra = NEON_PURPLE if val > 2.0 else BORDER
-                bar.setStyleSheet(f"""
-                    QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }}
-                    QProgressBar::chunk {{ background-color: {cor_barra}; border-radius: 4px; }}
-                """)
+                bar.setStyleSheet(f"QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }} QProgressBar::chunk {{ background-color: {cor_barra}; border-radius: 4px; }}")
 
     def clear_ui(self):
         self.board.clear_board()
         self.lbl_npu_preview.clear()
         self.npu_core.set_idle()
-        self.lbl_status.setText("STATUS: Aguardando Entrada | NPU PRONTA | MODELO: MNIST-v4.1")
+        if self.driver:
+            self.lbl_status.setText("STATUS: Aguardando Entrada | NPU PRONTA para Inferência Edge (Hardware)")
+        else:
+            self.lbl_status.setText("STATUS: Aguardando Entrada | MODO: Simulador Mock | NPU Desconectada")
         
         self.lbl_prediction.setText("?")
         self.lbl_prediction.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 72px; font-weight: 900; background: transparent; border: none;")
-        self.pred_circle.setStyleSheet(f"""
-            background-color: {hex_to_rgba(BORDER, 0.2)};
-            border: 3px solid {BORDER};
-            border-radius: 70px;
-        """)
+        self.pred_circle.setStyleSheet(f"background-color: {hex_to_rgba(BORDER, 0.2)}; border: 3px solid {BORDER}; border-radius: 70px;")
         self.pred_circle.setGraphicsEffect(None)
         
         for lbl_digit, bar, lbl_pct in self.conf_bars:
@@ -488,7 +666,4 @@ class NNWidget(QWidget):
             lbl_pct.setText("0.0%")
             lbl_pct.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: bold; font-size: 11px; background: transparent;")
             bar.setValue(0)
-            bar.setStyleSheet(f"""
-                QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }}
-                QProgressBar::chunk {{ background-color: {BORDER}; border-radius: 4px; }}
-            """)
+            bar.setStyleSheet(f"QProgressBar {{ border: none; border-radius: 4px; background-color: {BG_ELEMENT}; }} QProgressBar::chunk {{ background-color: {BORDER}; border-radius: 4px; }}")
