@@ -19,8 +19,8 @@ class HardwareTrainerThread(QThread):
     def __init__(self, port):
         super().__init__()
         self.port = port
-        self.model_file = "mlp_pretrained.pth"
-        self.bin_file = "mlp_server.bin"
+        self.model_file = "artefacts/mlp_pretrained.pth"
+        self.bin_file = "artefacts/mlp_server.bin"
 
     def run(self):
         try:
