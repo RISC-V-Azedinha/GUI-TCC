@@ -387,10 +387,23 @@ class NPUWidget(QWidget):
                 self.pe_widgets[r][c].update_state(pe_state['a'], pe_state['b'], pe_state['acc'], pe_state['done'])
                 
                 if pe_state['done']:
+                    # ==========================================
+                    # A LINHA QUE FALTAVA! (Puxar o valor do Acumulador)
                     val = pe_state['acc']
-                    if self.ppu_bias.active: val += 5
-                    if self.ppu_relu.active: val = max(0, val)
-                    if self.ppu_quant.active: val = max(-128, min(127, val))
+                    # ==========================================
+                    
+                    # --- PIPELINE DA PPU ---
+                    if self.ppu_bias.active: 
+                        val += 5
+                    
+                    if self.ppu_relu.active: 
+                        val = max(0, val)
+                    
+                    if self.ppu_quant.active:
+                        # 1. Escala: Reduz o acumulador de 32 bits (Divisão por 4)
+                        val = val >> 2 
+                        # 2. Saturação (Clipping) para limites de Inteiro de 8 bits com sinal
+                        val = max(-128, min(127, val)) 
                         
                     self.output_lbls[r][c].setText(str(val))
                     self.output_lbls[r][c].setStyleSheet(f"background-color: {GREEN}; color: {BG_PANEL}; border: 2px solid {GREEN}; border-radius: 6px; font-weight: bold; font-size: 20px;")
