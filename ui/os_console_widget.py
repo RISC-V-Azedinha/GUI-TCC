@@ -1,9 +1,14 @@
 # ui/os_console_widget.py
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                              QLabel, QFrame, QTextEdit, QStackedWidget, QGridLayout)
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-import qtawesome as qta
+import os
+import serial
+import struct
 import time
+import re
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+                              QLabel, QFrame, QTextEdit, QStackedWidget, QGridLayout, QApplication)
+from PyQt5.QtGui import QTextOption, QColor, QFont, QTextCursor
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+import qtawesome as qta
 
 # ==========================================
 # PALETA OFICIAL DO PROJETO
@@ -23,11 +28,235 @@ BLUE = "#3B82F6"
 RED = "#EF4444"
 
 def hex_to_rgba(hex_color, alpha=0.2):
-    """Converte HEX para RGBA para garantir compatibilidade com o Qt Stylesheet"""
     hex_color = hex_color.lstrip('#')
     r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
     return f"rgba({r}, {g}, {b}, {alpha})"
 
+
+# ==========================================
+# WIDGET CONSOLA INTERATIVA (True TTY)
+# ==========================================
+class TerminalConsole(QTextEdit):
+    send_data = pyqtSignal(bytes)
+
+    def __init__(self):
+        super().__init__()
+        self.setCursorWidth(8) 
+        self.setLineWrapMode(QTextEdit.NoWrap) 
+        self.document().setDocumentMargin(15)
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: #000000;
+                color: {TEXT_PRIMARY};
+                font-family: 'Consolas', 'JetBrains Mono', monospace;
+                font-size: 14px;
+                border: none;
+            }}
+        """)
+
+    def keyPressEvent(self, event):
+        # Cópia Local
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_C:
+            super().keyPressEvent(event)
+            return
+
+        # Colar na Serial
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_V:
+            clipboard = QApplication.clipboard()
+            if clipboard.text():
+                self.send_data.emit(clipboard.text().encode('utf-8'))
+            return
+
+        # Limpar Ecrã e repintar Prompt
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_L:
+            self.clear()
+            self.setTextColor(QColor(TEXT_PRIMARY))
+            self.send_data.emit(b'\x0C') 
+            return
+
+        # ==========================================
+        # COMANDOS DE EDITOR DO AXON-OS
+        # ==========================================
+        # CTRL+W (Write / Save) -> Envia ASCII 23
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_W:
+            self.send_data.emit(b'\x17')
+            return
+
+        # CTRL+X (Exit) -> Envia ASCII 24
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_X:
+            self.send_data.emit(b'\x18')
+            return
+
+        # Evitar envio de lixo em atalhos não mapeados
+        if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
+            return
+
+        text = event.text()
+        key = event.key()
+
+        if key == Qt.Key_Return or key == Qt.Key_Enter:
+            self.send_data.emit(b'\r')
+        elif key == Qt.Key_Backspace:
+            self.send_data.emit(b'\x08') 
+        elif key == Qt.Key_Up:
+            self.send_data.emit(b'\x1b[A')
+        elif key == Qt.Key_Down:
+            self.send_data.emit(b'\x1b[B')
+        elif key == Qt.Key_Right:
+            self.send_data.emit(b'\x1b[C')
+        elif key == Qt.Key_Left:
+            self.send_data.emit(b'\x1b[D')
+        elif text:
+            self.send_data.emit(text.encode('utf-8'))
+            
+        sb = self.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.moveCursor(QTextCursor.End)
+
+
+# ==========================================
+# WORKER SERIAL (Upload de Kernel + Monitor)
+# ==========================================
+class SerialMonitorWorker(QThread):
+    log_msg = pyqtSignal(str, str)
+    rx_data = pyqtSignal(str)
+    os_status = pyqtSignal(str, str)
+    finished = pyqtSignal()
+
+    def __init__(self, port, baud, payload):
+        super().__init__()
+        self.port = port
+        self.baud = baud
+        self.payload = payload
+        self.ser = None
+        self.running = True
+        self.to_send = b''
+        self.rx_buffer = ""
+
+    def send_data(self, data: bytes):
+        self.to_send += data
+
+    def run(self):
+        try:
+            self.log_msg.emit(f"Conectando em {self.port} ({self.baud} baud)...", "info")
+            self.ser = serial.Serial(self.port, self.baud, rtscts=False, dsrdtr=False, timeout=0.05)
+            
+            self.ser.rts = False
+            time.sleep(0.1)
+            self.ser.write(b'\xCA\xFE\xBA\xBE')
+            self.ser.write(b'\x04')
+            time.sleep(0.1)
+            self.ser.rts = True
+
+            self.log_msg.emit("Aguardando sinal do Bootloader da FPGA...", "info")
+            buffer = ""
+            start_wait = time.time()
+            boot_found = False
+            while time.time() - start_wait < 4.0 and self.running:
+                if self.ser.in_waiting:
+                    buffer += self.ser.read(self.ser.in_waiting).decode('utf-8', 'ignore')
+                    if "BOOT" in buffer:
+                        boot_found = True
+                        break
+            
+            if not boot_found:
+                self.log_msg.emit("Timeout aguardando 'BOOT'. Iniciando monitor passivo.", "error")
+            else:
+                self.ser.write(b'\xCA\xFE\xBA\xBE')
+                ack = b''
+                start_wait = time.time()
+                while time.time() - start_wait < 2.0 and self.running:
+                    if self.ser.in_waiting:
+                        ack = self.ser.read(1)
+                        if ack == b'!': break
+                
+                if ack == b'!':
+                    size = len(self.payload)
+                    self.log_msg.emit(f"Handshake OK! Transferindo kernel.bin ({size} bytes)...", "info")
+                    self.ser.write(struct.pack('<I', size))
+                    time.sleep(0.05)
+                    
+                    for i in range(0, size, 64):
+                        if not self.running: break
+                        self.ser.write(self.payload[i:i+64])
+                        time.sleep(0.002)
+                    
+                    self.log_msg.emit("Upload finalizado! SO Inicializando...", "success")
+                else:
+                    self.log_msg.emit("Falha no Handshake. Inicialização abortada.", "error")
+                    return
+
+            # --- LOOP DO MONITOR ---
+            while self.running:
+                if self.ser.in_waiting:
+                    raw = self.ser.read(self.ser.in_waiting)
+                    text = raw.decode('utf-8', errors='replace') 
+                    self.rx_buffer += text
+                    
+                    while '\x1b7' in self.rx_buffer and '\x1b8' in self.rx_buffer:
+                        start = self.rx_buffer.find('\x1b7')
+                        end = self.rx_buffer.find('\x1b8')
+                        
+                        if start < end:
+                            block = self.rx_buffer[start+2:end]
+                            self.rx_buffer = self.rx_buffer[:start] + self.rx_buffer[end+2:]
+                            
+                            if 'Uptime' in block: self.os_status.emit('uptime', block)
+                            if '[LED:' in block: self.os_status.emit('led', block)
+                        else:
+                            self.rx_buffer = self.rx_buffer.replace('\x1b8', '', 1)
+
+                    start_7 = self.rx_buffer.find('\x1b7')
+                    if start_7 >= 0:
+                        safe_text = self.rx_buffer[:start_7]
+                        if safe_text:
+                            self.rx_data.emit(safe_text)
+                        self.rx_buffer = self.rx_buffer[start_7:]
+                        if len(self.rx_buffer) > 512: 
+                            self.rx_data.emit(self.rx_buffer)
+                            self.rx_buffer = ""
+                    else:
+                        match = re.search(r'\x1b\[[0-9;?]*$|\x1b[()]$|\x1b$', self.rx_buffer)
+                        if match:
+                            cut = match.start()
+                            safe_text = self.rx_buffer[:cut]
+                            if safe_text:
+                                self.rx_data.emit(safe_text)
+                            self.rx_buffer = self.rx_buffer[cut:]
+                            if len(self.rx_buffer) > 128:
+                                self.rx_data.emit(self.rx_buffer)
+                                self.rx_buffer = ""
+                        else:
+                            if self.rx_buffer:
+                                self.rx_data.emit(self.rx_buffer)
+                                self.rx_buffer = ""
+                
+                # Despachar Comandos da UI c/ Hardware Pacing (Prevenir Overrun)
+                if self.to_send:
+                    for byte in self.to_send:
+                        self.ser.write(bytes([byte]))
+                        time.sleep(0.002)
+                    self.to_send = b''
+                    
+                time.sleep(0.01)
+
+        except Exception as e:
+            self.log_msg.emit(f"Erro Serial: {str(e)}", "error")
+        finally:
+            if self.ser and self.ser.is_open:
+                self.ser.close()
+            self.finished.emit()
+
+    def stop(self):
+        self.running = False
+
+
+# ==========================================
+# WIDGET PRINCIPAL
+# ==========================================
 class OSConsoleWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -35,49 +264,70 @@ class OSConsoleWidget(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
 
-        # ---------------------------------------------------------
-        # PAINEL ESQUERDO: TERMINAL SERIAL
-        # ---------------------------------------------------------
+        self.target_port = "/dev/ttyUSB1"
+        self.target_baud = 921600
+
+        # --- PAINEL TERMINAL ---
         terminal_panel = QFrame()
         terminal_panel.setStyleSheet(f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 8px;")
         terminal_layout = QVBoxLayout(terminal_panel)
         terminal_layout.setContentsMargins(0, 0, 0, 0)
         terminal_layout.setSpacing(0)
 
-        # Header do Terminal
+        # ==========================================
+        # CABEÇALHO SUPERIOR (Aba de Terminal)
+        # ==========================================
         term_header = QFrame()
-        term_header.setFixedHeight(40)
-        term_header.setStyleSheet(f"background-color: {BG_ELEMENT}; border-bottom: 1px solid {BORDER}; border-radius: 8px 8px 0 0;")
+        term_header.setFixedHeight(32)
+        # Fundo escuro (estilo aba ativa) e sem as portas de COM
+        term_header.setStyleSheet(f"background-color: #050608; border-bottom: 1px solid {BORDER}; border-radius: 8px 8px 0 0;")
         term_h_layout = QHBoxLayout(term_header)
-        term_h_layout.setContentsMargins(15, 0, 15, 0)
+        term_h_layout.setContentsMargins(15, 0, 10, 0)
+        term_h_layout.setSpacing(8)
 
-        lbl_port_info = QLabel("/dev/ttyUSB0 - 115200 8N1")
-        lbl_port_info.setStyleSheet(f"color: {TEXT_SECONDARY}; font-family: monospace; font-size: 11px; border: none;")
-        term_h_layout.addWidget(lbl_port_info)
+        lbl_term_title = QLabel("TERMINAL")
+        lbl_term_title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-family: 'Consolas', 'JetBrains Mono', monospace; font-weight: bold; font-size: 11px; letter-spacing: 1px; border: none;")
+        term_h_layout.addWidget(lbl_term_title)
+        
         term_h_layout.addStretch()
 
         self.lbl_status_dot = QLabel("●")
-        self.lbl_status_dot.setStyleSheet(f"color: {RED}; border: none; font-size: 14px;") # Vermelho (Offline)
+        self.lbl_status_dot.setStyleSheet(f"color: {RED}; font-size: 12px; border: none; padding-bottom: 2px;") 
+
         self.lbl_status_text = QLabel("OFFLINE")
-        self.lbl_status_text.setStyleSheet(f"color: {RED}; font-weight: bold; font-size: 11px; border: none;")
+        self.lbl_status_text.setStyleSheet(f"color: {TEXT_SECONDARY}; font-family: 'Consolas', 'JetBrains Mono', monospace; font-weight: bold; font-size: 11px; border: none;")
         
         term_h_layout.addWidget(self.lbl_status_dot)
         term_h_layout.addWidget(self.lbl_status_text)
         
-        # Botão de Desconectar (Escondido inicialmente)
-        self.btn_disconnect = QPushButton("✗")
-        self.btn_disconnect.setStyleSheet(f"color: {RED}; background: transparent; border: none; font-weight: bold;")
+        spacer_label = QLabel(" ")
+        spacer_label.setFixedWidth(5)
+        spacer_label.setStyleSheet("border: none; background: transparent;")
+        term_h_layout.addWidget(spacer_label)
+        
+        self.btn_disconnect = QPushButton()
+        self.btn_disconnect.setIcon(qta.icon('fa5s.times', color=TEXT_SECONDARY))
         self.btn_disconnect.setCursor(Qt.PointingHandCursor)
+        self.btn_disconnect.setFixedSize(24, 24)
+        self.btn_disconnect.setToolTip("Disconnect")
+        self.btn_disconnect.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: {hex_to_rgba(RED, 0.2)};
+            }}
+        """)
         self.btn_disconnect.clicked.connect(self.disconnect_serial)
         self.btn_disconnect.hide()
         term_h_layout.addWidget(self.btn_disconnect)
 
         terminal_layout.addWidget(term_header)
-
-        # Stack do Terminal (Página 0: Botão Conectar | Página 1: Texto)
         self.term_stack = QStackedWidget()
         
-        # Página 0: Ecrã de Conexão
+        # --- ECRÃ DE CONEXÃO ---
         page_connect = QWidget()
         page_connect.setStyleSheet("background-color: #000000; border-radius: 0 0 8px 8px;")
         conn_layout = QVBoxLayout(page_connect)
@@ -112,33 +362,47 @@ class OSConsoleWidget(QWidget):
         conn_layout.addWidget(self.btn_connect, alignment=Qt.AlignCenter)
         self.term_stack.addWidget(page_connect)
 
-        # Página 1: Consola Real
-        self.console_output = QTextEdit()
-        self.console_output.document().setDocumentMargin(15)
-        self.console_output.setReadOnly(True)
-        self.console_output.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: #000000;  /* <-- Mudei aqui para preto puro */
-                color: {TEAL};
-                font-family: 'Consolas', 'JetBrains Mono', monospace;
-                font-size: 13px;
-                border: none;
-                border-radius: 0 0 8px 8px;
-                padding: 15px;
+        # --- ECRÃ CONSOLA INTERATIVA ---
+        page_console = QWidget()
+        console_layout = QVBoxLayout(page_console)
+        console_layout.setContentsMargins(0,0,0,0)
+        console_layout.setSpacing(0)
+
+        # BARRA DE STATUS DO AXON-OS
+        self.os_status_bar = QFrame()
+        self.os_status_bar.setFixedHeight(34)
+        self.os_status_bar.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_ELEMENT}; 
+                border-bottom: 1px solid {BORDER};
             }}
         """)
-        self.term_stack.addWidget(self.console_output)
-        
+        status_layout = QHBoxLayout(self.os_status_bar)
+        status_layout.setContentsMargins(15, 0, 15, 0)
+
+        self.gui_lbl_uptime = QLabel("<span style='color: #8B9BB4;'>Uptime:</span> <span style='color: #6CA1A2; font-weight: bold;'>--:--</span>")
+        self.gui_lbl_uptime.setStyleSheet(f"font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 13px; border: none; background: transparent;")
+
+        self.gui_lbl_leds = QLabel(f"<span style='color: #8B9BB4;'>LED:</span> <span style='color: {BORDER}; font-size: 16px;'>●</span>")
+        self.gui_lbl_leds.setStyleSheet(f"font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 13px; border: none; background: transparent;")
+
+        status_layout.addWidget(self.gui_lbl_uptime)
+        status_layout.addStretch()
+        status_layout.addWidget(self.gui_lbl_leds)
+        console_layout.addWidget(self.os_status_bar)
+
+        self.console_output = TerminalConsole()
+        console_layout.addWidget(self.console_output)
+
+        self.term_stack.addWidget(page_console)
         terminal_layout.addWidget(self.term_stack)
+        
         main_layout.addWidget(terminal_panel, stretch=3)
 
-        # ---------------------------------------------------------
-        # PAINEL DIREITO: MACROS E CONFIGURAÇÃO
-        # ---------------------------------------------------------
+        # --- PAINEL DIREITO: MACROS E CONFIGURAÇÕES ---
         sidebar_layout = QVBoxLayout()
         sidebar_layout.setSpacing(20)
 
-        # Secção: QUICK MACROS
         macros_panel = QFrame()
         macros_panel.setStyleSheet(f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 8px;")
         m_layout = QVBoxLayout(macros_panel)
@@ -149,15 +413,18 @@ class OSConsoleWidget(QWidget):
         m_layout.addWidget(lbl_m_title)
 
         self.macro_buttons = []
+        
         macros = [
-            (" System Info", 'fa5s.microchip', self.macro_sysinfo),
-            (" List Devices", 'fa5s.list', self.macro_list_dev),
-            (" NPU Status", 'fa5s.brain', self.macro_npu_status),
-            (" DMA Benchmark", 'fa5s.bolt', self.macro_dma),
-            (" Reboot OS", 'fa5s.sync', self.macro_reboot)
+            (" Help", 'fa5s.question-circle', "help"),
+            (" Clear", 'fa5s.broom', "clear"),
+            (" Process Status", 'fa5s.list', "ps"),
+            (" Heap Usage", 'fa5s.memory', "heap"),
+            (" Defrag Heap", 'fa5s.compress-arrows-alt', "defrag"),
+            (" Trigger Panic", 'fa5s.bug', "panic"),
+            (" Reboot OS", 'fa5s.sync', "reboot")
         ]
 
-        for text, icon, callback in macros:
+        for text, icon, cmd in macros:
             btn = QPushButton(text)
             btn.setIcon(qta.icon(icon, color=TEXT_SECONDARY))
             btn.setCursor(Qt.PointingHandCursor)
@@ -178,13 +445,12 @@ class OSConsoleWidget(QWidget):
                 }}
             """)
             btn.setEnabled(False)
-            btn.clicked.connect(callback)
+            btn.clicked.connect(lambda _, c=cmd: self.send_macro(c))
             self.macro_buttons.append(btn)
             m_layout.addWidget(btn)
 
         sidebar_layout.addWidget(macros_panel)
 
-        # Secção: CONNECTION SETTINGS
         settings_panel = QFrame()
         settings_panel.setStyleSheet(f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 8px;")
         s_layout = QVBoxLayout(settings_panel)
@@ -198,8 +464,8 @@ class OSConsoleWidget(QWidget):
         grid.setVerticalSpacing(10)
 
         settings = [
-            ("Port", "/dev/ttyUSB0"),
-            ("Baud", "115200"),
+            ("Port", self.target_port),
+            ("Baud", str(self.target_baud)),
             ("Data", "8 bits"),
             ("Parity", "None"),
             ("Stop", "1 bit")
@@ -216,133 +482,168 @@ class OSConsoleWidget(QWidget):
             
         s_layout.addLayout(grid)
         sidebar_layout.addWidget(settings_panel)
-
         sidebar_layout.addStretch()
         main_layout.addLayout(sidebar_layout, stretch=1)
 
-        # Variáveis de Controlo Interno
-        self.is_connected = False
-        self.boot_timer = QTimer()
-        self.boot_timer.timeout.connect(self._boot_sequence_step)
-        self.boot_step = 0
-        
-        self.boot_messages = [
-            f"<span style='color:{MUSTARD};'>[BOOT]</span> Inicializando RISC-V SoC...",
-            f"<span style='color:{MUSTARD};'>[BOOT]</span> A carregar Kernel do ROM para RAM (0x80000000)...",
-            f"<span style='color:{GREEN};'>[ OK ]</span> CPU Core RV32I verificado.",
-            f"<span style='color:{GREEN};'>[ OK ]</span> Memória SRAM montada (256 KB).",
-            f"<span style='color:{GREEN};'>[ OK ]</span> Módulo DMA mapeado em I/O.",
-            f"<span style='color:{GREEN};'>[ OK ]</span> NPU Systolic Array pronta.",
-            f"<br><span style='color:{BLUE};'>Bem-vindo ao AXON-OS v1.0</span>",
-            "root@axon-os:~# "
-        ]
+        self.worker = None
 
-    # ---------------------------------------------------------
-    # LÓGICA DO TERMINAL (SIMULAÇÃO)
-    # ---------------------------------------------------------
     def connect_serial(self):
-        self.is_connected = True
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        kernel_path = os.path.join(base_dir, "artefacts", "kernel.bin")
+        
+        payload = b''
+        if os.path.exists(kernel_path):
+            with open(kernel_path, 'rb') as f:
+                payload = f.read()
+        else:
+            cursor = self.console_output.textCursor()
+            fmt = cursor.charFormat()
+            fmt.setForeground(QColor(RED))
+            cursor.setCharFormat(fmt)
+            cursor.insertText(f"[ERRO] kernel.bin não encontrado em: {kernel_path}\n")
+            return
+
+        self.console_output.clear()
         self.term_stack.setCurrentIndex(1)
-        self.lbl_status_dot.setStyleSheet(f"color: {GREEN}; border: none; font-size: 14px;")
-        self.lbl_status_text.setStyleSheet(f"color: {GREEN}; font-weight: bold; font-size: 11px; border: none;")
-        self.lbl_status_text.setText("ONLINE")
+        
+        # Design Atualizado ON Connect
+        self.lbl_status_dot.setStyleSheet(f"color: {GREEN}; font-size: 12px; border: none; padding-bottom: 2px;")
+        self.lbl_status_text.setText("CONNECTED")
+        self.lbl_status_text.setStyleSheet(f"color: {GREEN}; font-family: 'Consolas', 'JetBrains Mono', monospace; font-weight: bold; font-size: 11px; border: none;")
         self.btn_disconnect.show()
         
-        # Iniciar simulação de boot
-        self.console_output.clear()
-        self.boot_step = 0
-        self.boot_timer.start(300) # Imprime uma linha a cada 300ms
+        self.gui_lbl_uptime.setText(f"<span style='color: {TEXT_SECONDARY};'>Uptime:</span> <span style='color: {TEAL}; font-weight: bold;'>00:00</span>")
+        self.gui_lbl_leds.setText(f"<span style='color: {TEXT_SECONDARY};'>LED:</span> <span style='color: {BORDER}; font-size: 16px;'>●</span>")
+
+        for btn in self.macro_buttons:
+            btn.setEnabled(True)
+
+        self.worker = SerialMonitorWorker(port=self.target_port, baud=self.target_baud, payload=payload)
+        self.worker.log_msg.connect(self.display_sys_log)
+        self.worker.rx_data.connect(self.append_terminal_text)
+        self.worker.os_status.connect(self.update_gui_status)
+        self.worker.finished.connect(self.on_worker_finished)
+        
+        self.console_output.send_data.connect(self.worker.send_data)
+        self.worker.start()
+        
+        self.console_output.setFocus()
+        self.console_output.moveCursor(QTextCursor.End)
 
     def disconnect_serial(self):
-        self.is_connected = False
+        if self.worker:
+            self.worker.stop()
+            self.worker.wait()
+            self.worker = None
+
         self.term_stack.setCurrentIndex(0)
-        self.lbl_status_dot.setStyleSheet(f"color: {RED}; border: none; font-size: 14px;")
-        self.lbl_status_text.setStyleSheet(f"color: {RED}; font-weight: bold; font-size: 11px; border: none;")
+        
+        # Design Atualizado ON Disconnect
+        self.lbl_status_dot.setStyleSheet(f"color: {RED}; font-size: 12px; border: none; padding-bottom: 2px;")
         self.lbl_status_text.setText("OFFLINE")
+        self.lbl_status_text.setStyleSheet(f"color: {TEXT_SECONDARY}; font-family: 'Consolas', 'JetBrains Mono', monospace; font-weight: bold; font-size: 11px; border: none;")
         self.btn_disconnect.hide()
         
         for btn in self.macro_buttons:
             btn.setEnabled(False)
 
-    def _boot_sequence_step(self):
-        if self.boot_step < len(self.boot_messages):
-            self.console_output.append(self.boot_messages[self.boot_step])
-            self.boot_step += 1
-        else:
-            self.boot_timer.stop()
-            # Ativa os botões de macro quando o boot termina
-            for btn in self.macro_buttons:
-                btn.setEnabled(True)
+    def on_worker_finished(self):
+        self.disconnect_serial()
 
-    def print_cmd(self, cmd, response):
-        """Função auxiliar para imprimir um comando e a sua resposta falsa."""
-        if not self.is_connected: return
-        
-        # Remove a última linha (que é o prompt)
+    def send_macro(self, cmd):
+        if self.worker and self.worker.running:
+            self.worker.send_data(f"{cmd}\r\n".encode('utf-8'))
+            self.console_output.setFocus()
+
+    def display_sys_log(self, msg, msg_type):
+        color = GREEN if msg_type == "success" else RED if msg_type == "error" else MUSTARD
         cursor = self.console_output.textCursor()
-        cursor.movePosition(cursor.End)
-        cursor.select(cursor.LineUnderCursor)
-        cursor.removeSelectedText()
+        cursor.movePosition(QTextCursor.End)
+        fmt = cursor.charFormat()
+        fmt.setForeground(QColor(color))
+        cursor.setCharFormat(fmt)
+        cursor.insertText(f"[SISTEMA] {msg}\n")
+        self.scroll_to_bottom()
+
+    def update_gui_status(self, stat_type, raw_ansi):
+        clean_text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', raw_ansi)
+        clean_text = re.sub(r'\x1b[()][A-Za-z0-9]', '', clean_text)
+        clean_text = clean_text.replace('\r', '').replace('\n', '').replace('\x00', '').strip()
         
-        # Imprime o comando digitado, a resposta, e o prompt novamente
-        self.console_output.append(f"root@axon-os:~# <span style='color:{TEXT_PRIMARY};'>{cmd}</span>")
-        self.console_output.append(response)
-        self.console_output.append("root@axon-os:~# ")
+        if stat_type == 'uptime':
+            time_str = clean_text.replace('Uptime: ', '').replace('Uptime:', '').strip()
+            self.gui_lbl_uptime.setText(f"<span style='color: {TEXT_SECONDARY};'>Uptime:</span> <span style='color: {TEAL}; font-weight: bold;'>{time_str}</span>")
+            
+        elif stat_type == 'led':
+            if '*' in clean_text:
+                self.gui_lbl_leds.setText(f"<span style='color: {TEXT_SECONDARY};'>LED:</span> <span style='color: {GREEN}; font-size: 16px;'>●</span>")
+            else:
+                self.gui_lbl_leds.setText(f"<span style='color: {TEXT_SECONDARY};'>LED:</span> <span style='color: {BORDER}; font-size: 16px;'>●</span>")
+
+    def append_terminal_text(self, text):
+        cleared = False
         
-        # Auto-scroll para o fim
+        if '\x1b[2J' in text:
+            self.console_output.clear()
+            self.console_output.setTextColor(QColor(TEXT_PRIMARY))
+            self.console_output.setFontWeight(QFont.Normal)
+            text = text.split('\x1b[2J')[-1]
+            cleared = True
+
+        text = text.replace('\x1b[H', '').replace('\x1b[1;1H', '')
+        text = text.replace('\x1b7', '').replace('\x1b8', '') 
+        text = re.sub(r'\x1b\[[suK]', '', text)
+        text = re.sub(r'\x1b\[[0-9;?]*[a-ln-zA-Z]', '', text)
+        text = re.sub(r'\x1b[()][A-Za-z0-9]', '', text)
+
+        if not text:
+            return
+
+        cursor = self.console_output.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        
+        fmt = cursor.charFormat()
+        if cleared:
+            fmt.setForeground(QColor(TEXT_PRIMARY))
+            fmt.setFontWeight(QFont.Normal)
+
+        parts = re.split(r'(\x1b\[[\d;]*m)', text)
+
+        for part in parts:
+            if part.startswith('\x1b['):
+                codes = part[2:-1].split(';')
+                color = TEXT_PRIMARY
+                weight = QFont.Normal
+
+                for c in codes:
+                    if c in ('0', ''): 
+                        color = TEXT_PRIMARY
+                        weight = QFont.Normal
+                    elif c == '1': weight = QFont.Bold
+                    elif c == '31': color = RED
+                    elif c == '32': color = GREEN
+                    elif c == '33': color = MUSTARD
+                    elif c == '34': color = BLUE
+                    elif c == '35': color = PURPLE
+                    elif c == '36': color = TEAL
+                    elif c == '37': color = TEXT_PRIMARY
+
+                fmt.setForeground(QColor(color))
+                fmt.setFontWeight(weight)
+            else:
+                if part:
+                    cursor.setCharFormat(fmt)
+                    clean_part = part.replace('\r\n', '\n').replace('\r', '')
+                    
+                    for char in clean_part:
+                        if char in ('\b', '\x08', '\x7f'):
+                            cursor.deletePreviousChar()
+                        else:
+                            cursor.insertText(char)
+
+        self.console_output.setTextCursor(cursor)
+        self.scroll_to_bottom()
+
+    def scroll_to_bottom(self):
         sb = self.console_output.verticalScrollBar()
         sb.setValue(sb.maximum())
-
-    # ---------------------------------------------------------
-    # FUNÇÕES DAS MACROS
-    # ---------------------------------------------------------
-    def macro_sysinfo(self):
-        resp = (
-            f"<span style='color:{TEAL};'>"
-            "Arquitetura: RV32I<br>"
-            "Frequência de Clock: 100 MHz<br>"
-            "Memória Total: 256 KB SRAM<br>"
-            "Extensões Ativas: M, A, C (NPU)<br>"
-            "Uptime: 2 minutos"
-            "</span>"
-        )
-        self.print_cmd("cat /proc/cpuinfo", resp)
-
-    def macro_list_dev(self):
-        resp = (
-            f"<span style='color:{TEAL};'>"
-            "0x40000000 - UART0 (Serial Console)<br>"
-            "0x40001000 - GPIO Controller<br>"
-            "0x50000000 - DMA Engine<br>"
-            "0x60000000 - Systolic NPU Co-Processor"
-            "</span>"
-        )
-        self.print_cmd("lsdev", resp)
-
-    def macro_npu_status(self):
-        resp = (
-            f"<span style='color:{TEAL};'>"
-            f"NPU Power State: <span style='color:{GREEN};'>ON</span><br>"
-            "Array Config: 3x3 Output Stationary<br>"
-            "MAC Utilization: 0% (Idle)<br>"
-            "PPU Pipeline: Active (ReLU + Bias)"
-            "</span>"
-        )
-        self.print_cmd("npu_stat", resp)
-
-    def macro_dma(self):
-        resp = (
-            f"<span style='color:{TEAL};'>"
-            "A iniciar Transferência SRAM -> NPU...<br>"
-            "Copiados 1024 bytes em 42 ciclos.<br>"
-            "Bandwidth Estimada: 95.2 MB/s"
-            "</span>"
-        )
-        self.print_cmd("dma_test --run", resp)
-
-    def macro_reboot(self):
-        self.print_cmd("reboot", f"<span style='color:{MUSTARD};'>O sistema está a ser reiniciado...</span>")
-        # Desativa macros e roda o boot de novo após 1 segundo
-        for btn in self.macro_buttons:
-            btn.setEnabled(False)
-        QTimer.singleShot(1000, self.connect_serial)
