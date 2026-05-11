@@ -55,39 +55,30 @@ class TerminalConsole(QTextEdit):
         """)
 
     def keyPressEvent(self, event):
-        # Cópia Local
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_C:
             super().keyPressEvent(event)
             return
 
-        # Colar na Serial
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_V:
             clipboard = QApplication.clipboard()
             if clipboard.text():
                 self.send_data.emit(clipboard.text().encode('utf-8'))
             return
 
-        # Limpar Ecrã e repintar Prompt
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_L:
             self.clear()
             self.setTextColor(QColor(TEXT_PRIMARY))
             self.send_data.emit(b'\x0C') 
             return
 
-        # ==========================================
-        # COMANDOS DE EDITOR DO AXON-OS
-        # ==========================================
-        # CTRL+W (Write / Save) -> Envia ASCII 23
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_W:
             self.send_data.emit(b'\x17')
             return
 
-        # CTRL+X (Exit) -> Envia ASCII 24
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_X:
             self.send_data.emit(b'\x18')
             return
 
-        # Evitar envio de lixo em atalhos não mapeados
         if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
             return
 
@@ -234,7 +225,6 @@ class SerialMonitorWorker(QThread):
                                 self.rx_data.emit(self.rx_buffer)
                                 self.rx_buffer = ""
                 
-                # Despachar Comandos da UI c/ Hardware Pacing (Prevenir Overrun)
                 if self.to_send:
                     for byte in self.to_send:
                         self.ser.write(bytes([byte]))
@@ -267,19 +257,14 @@ class OSConsoleWidget(QWidget):
         self.target_port = "/dev/ttyUSB1"
         self.target_baud = 921600
 
-        # --- PAINEL TERMINAL ---
         terminal_panel = QFrame()
         terminal_panel.setStyleSheet(f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 8px;")
         terminal_layout = QVBoxLayout(terminal_panel)
         terminal_layout.setContentsMargins(0, 0, 0, 0)
         terminal_layout.setSpacing(0)
 
-        # ==========================================
-        # CABEÇALHO SUPERIOR (Aba de Terminal)
-        # ==========================================
         term_header = QFrame()
         term_header.setFixedHeight(32)
-        # Fundo escuro (estilo aba ativa) e sem as portas de COM
         term_header.setStyleSheet(f"background-color: #050608; border-bottom: 1px solid {BORDER}; border-radius: 8px 8px 0 0;")
         term_h_layout = QHBoxLayout(term_header)
         term_h_layout.setContentsMargins(15, 0, 10, 0)
@@ -327,7 +312,6 @@ class OSConsoleWidget(QWidget):
         terminal_layout.addWidget(term_header)
         self.term_stack = QStackedWidget()
         
-        # --- ECRÃ DE CONEXÃO ---
         page_connect = QWidget()
         page_connect.setStyleSheet("background-color: #000000; border-radius: 0 0 8px 8px;")
         conn_layout = QVBoxLayout(page_connect)
@@ -362,13 +346,11 @@ class OSConsoleWidget(QWidget):
         conn_layout.addWidget(self.btn_connect, alignment=Qt.AlignCenter)
         self.term_stack.addWidget(page_connect)
 
-        # --- ECRÃ CONSOLA INTERATIVA ---
         page_console = QWidget()
         console_layout = QVBoxLayout(page_console)
         console_layout.setContentsMargins(0,0,0,0)
         console_layout.setSpacing(0)
 
-        # BARRA DE STATUS DO AXON-OS
         self.os_status_bar = QFrame()
         self.os_status_bar.setFixedHeight(34)
         self.os_status_bar.setStyleSheet(f"""
@@ -399,7 +381,6 @@ class OSConsoleWidget(QWidget):
         
         main_layout.addWidget(terminal_panel, stretch=3)
 
-        # --- PAINEL DIREITO: MACROS E CONFIGURAÇÕES ---
         sidebar_layout = QVBoxLayout()
         sidebar_layout.setSpacing(20)
 
@@ -506,7 +487,6 @@ class OSConsoleWidget(QWidget):
         self.console_output.clear()
         self.term_stack.setCurrentIndex(1)
         
-        # Design Atualizado ON Connect
         self.lbl_status_dot.setStyleSheet(f"color: {GREEN}; font-size: 12px; border: none; padding-bottom: 2px;")
         self.lbl_status_text.setText("CONNECTED")
         self.lbl_status_text.setStyleSheet(f"color: {GREEN}; font-family: 'Consolas', 'JetBrains Mono', monospace; font-weight: bold; font-size: 11px; border: none;")
@@ -538,7 +518,6 @@ class OSConsoleWidget(QWidget):
 
         self.term_stack.setCurrentIndex(0)
         
-        # Design Atualizado ON Disconnect
         self.lbl_status_dot.setStyleSheet(f"color: {RED}; font-size: 12px; border: none; padding-bottom: 2px;")
         self.lbl_status_text.setText("OFFLINE")
         self.lbl_status_text.setStyleSheet(f"color: {TEXT_SECONDARY}; font-family: 'Consolas', 'JetBrains Mono', monospace; font-weight: bold; font-size: 11px; border: none;")
@@ -647,3 +626,16 @@ class OSConsoleWidget(QWidget):
     def scroll_to_bottom(self):
         sb = self.console_output.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    # ==========================================
+    # EVENTOS DE CICLO DE VIDA DO WIDGET
+    # ==========================================
+    def hideEvent(self, event):
+        """Garante que a porta serial é fechada e a UI resetada ao sair do laboratório."""
+        self.disconnect_serial()
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        """Garante a limpeza ao fechar a aplicação."""
+        self.disconnect_serial()
+        super().closeEvent(event)
