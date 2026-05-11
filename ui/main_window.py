@@ -27,53 +27,114 @@ class ConnectionConfigDialog(QDialog):
     """Janela Modal para alterar Porta e Baud Rate globalmente."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(" Configurações de Conexão")
-        self.setFixedSize(320, 160)
+        self.setWindowTitle(" Connection Settings")
+        
+        # 1. Aumentámos a caixa para dar espaço aos elementos!
+        self.setFixedSize(420, 240) 
+        
+        # Remove o botão de Ajuda (?) nativo do Windows
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
         self.setStyleSheet("""
-            QDialog { background-color: #0B0D12; }
-            QLabel { color: #8B9BB4; font-weight: bold; font-family: 'Consolas', monospace; font-size: 12px;}
+            QDialog { 
+                background-color: #0B0D12; 
+            }
+            QLabel { 
+                color: #8B9BB4; 
+                font-weight: bold; 
+                font-family: 'Consolas', 'Segoe UI', sans-serif; 
+                font-size: 12px;
+                letter-spacing: 1px;
+            }
             QLineEdit, QComboBox {
                 background-color: #12141A;
-                color: #6CA1A2;
+                color: #E2E8F0;
                 border: 1px solid #2A2F3A;
-                border-radius: 4px;
-                padding: 6px;
-                font-family: 'Consolas', monospace;
-                font-weight: bold;
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-family: 'Consolas', 'JetBrains Mono', monospace;
+                font-size: 13px;
+                min-height: 20px; /* 2. Proteção para nunca esmagar o texto */
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #6CA1A2;
+                background-color: #1A1D24;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 25px;
+                border-left: 1px solid #2A2F3A;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #12141A;
+                color: #E2E8F0;
+                border: 1px solid #2A2F3A;
+                selection-background-color: #2A2F3A;
+                selection-color: #6CA1A2;
+                outline: none;
             }
             QPushButton {
                 background-color: transparent;
                 color: #E2E8F0;
                 border: 1px solid #2A2F3A;
-                border-radius: 4px;
-                padding: 6px 15px;
+                border-radius: 6px;
+                padding: 8px 20px;
                 font-weight: bold;
+                min-height: 20px;
             }
-            QPushButton:hover { background-color: #12141A; border: 1px solid #6CA1A2; }
+            QPushButton:hover { 
+                background-color: #1A1D24; 
+                border: 1px solid #8B9BB4; 
+            }
         """)
 
+        # Layout Principal
         layout = QFormLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setContentsMargins(30, 30, 30, 25) # Mais espaço nas bordas
+        layout.setSpacing(20) # Espaço entre as linhas
+        
+        # 3. Força os labels a ficarem alinhados à direita para um visual limpo
+        layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter) 
 
         self.conn_mgr = ConnectionManager()
 
         self.port_input = QLineEdit(self.conn_mgr.get_port())
         
         self.baud_input = QComboBox()
+        self.baud_input.setFocusPolicy(Qt.StrongFocus) 
         self.baud_input.addItems(["9600", "115200", "460800", "921600", "1000000"])
         self.baud_input.setCurrentText(str(self.conn_mgr.get_baud()))
 
-        layout.addRow("Porta Serial:", self.port_input)
-        layout.addRow("Baud Rate:", self.baud_input)
+        layout.addRow("🔌 PORTA SERIAL:", self.port_input)
+        layout.addRow("⚡ BAUD RATE:", self.baud_input)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        # 4. Criamos uma linha de botões manualmente para garantir a estabilidade do CSS
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch() # Empurra os botões para a direita
         
-        # Destaque no botão de salvar
-        buttons.button(QDialogButtonBox.Save).setStyleSheet("color: #5DB373; border-color: #5DB373;")
-        layout.addWidget(buttons)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.clicked.connect(self.reject)
+        
+        save_btn = QPushButton("Apply")
+        save_btn.setCursor(Qt.PointingHandCursor)
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(93, 179, 115, 0.15);
+                color: #5DB373;
+                border: 1px solid #5DB373;
+            }
+            QPushButton:hover {
+                background-color: rgba(93, 179, 115, 0.3);
+            }
+        """)
+        save_btn.clicked.connect(self.accept)
+        
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(save_btn)
+
+        layout.addRow(btn_layout)
 
     def get_values(self):
         return self.port_input.text(), int(self.baud_input.currentText())
