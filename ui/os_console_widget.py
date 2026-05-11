@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                               QLabel, QFrame, QTextEdit, QStackedWidget, QGridLayout, QApplication)
 from PyQt5.QtGui import QTextOption, QColor, QFont, QTextCursor
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from core.connection_manager import ConnectionManager
 import qtawesome as qta
 
 # ==========================================
@@ -254,8 +255,9 @@ class OSConsoleWidget(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
 
-        self.target_port = "/dev/ttyUSB1"
-        self.target_baud = 921600
+        self.conn_mgr = ConnectionManager()
+        self.target_port = self.conn_mgr.get_port()
+        self.target_baud = self.conn_mgr.get_baud()
 
         terminal_panel = QFrame()
         terminal_panel.setStyleSheet(f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 8px;")
@@ -444,20 +446,42 @@ class OSConsoleWidget(QWidget):
         grid = QGridLayout()
         grid.setVerticalSpacing(10)
 
-        settings = [
-            ("Port", self.target_port),
-            ("Baud", str(self.target_baud)),
+        # 1. Criamos as labels dinâmicas (usando self.) para podermos alterar depois!
+        self.lbl_set_port = QLabel(self.target_port)
+        self.lbl_set_port.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: bold; border: none;")
+        self.lbl_set_port.setAlignment(Qt.AlignRight)
+
+        self.lbl_set_baud = QLabel(str(self.target_baud))
+        self.lbl_set_baud.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: bold; border: none;")
+        self.lbl_set_baud.setAlignment(Qt.AlignRight)
+
+        # 2. Adicionamos os Títulos ("Port", "Baud") e as labels dinâmicas nas Linhas 0 e 1 do Grid
+        lbl_k_port = QLabel("Port")
+        lbl_k_port.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; border: none;")
+        grid.addWidget(lbl_k_port, 0, 0)
+        grid.addWidget(self.lbl_set_port, 0, 1)
+
+        lbl_k_baud = QLabel("Baud")
+        lbl_k_baud.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; border: none;")
+        grid.addWidget(lbl_k_baud, 1, 0)
+        grid.addWidget(self.lbl_set_baud, 1, 1)
+
+        # 3. As configurações estáticas (8N1) que nunca mudam, adicionamos num loop a partir da linha 2
+        static_settings = [
             ("Data", "8 bits"),
             ("Parity", "None"),
             ("Stop", "1 bit")
         ]
         
-        for row, (k, v) in enumerate(settings):
+        # start=2 faz com que o loop coloque os itens na linha 2, 3 e 4 do Grid
+        for row, (k, v) in enumerate(static_settings, start=2):
             lbl_k = QLabel(k)
             lbl_k.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; border: none;")
+            
             lbl_v = QLabel(v)
             lbl_v.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: bold; border: none;")
             lbl_v.setAlignment(Qt.AlignRight)
+            
             grid.addWidget(lbl_k, row, 0)
             grid.addWidget(lbl_v, row, 1)
             

@@ -3,6 +3,7 @@ import serial
 import time
 import struct
 from PyQt5.QtCore import QThread, pyqtSignal
+from core.connection_manager import ConnectionManager
 
 class FPGALoader(QThread):
     progress_update = pyqtSignal(int)
@@ -10,10 +11,9 @@ class FPGALoader(QThread):
     finished = pyqtSignal(bool)
     telemetry_update = pyqtSignal(list, int)
 
-    def __init__(self, port="COM7", baud=921600): # Baud rate alto conforme main_controller
+    def __init__(self): # Baud rate alto conforme main_controller
         super().__init__()
-        self.port = port
-        self.baud = baud
+        self.conn_mgr = ConnectionManager()
         self.payload = b''
         self.mode = 'upload' 
 
@@ -22,11 +22,13 @@ class FPGALoader(QThread):
         self.mode = 'upload'
 
     def run(self):
+        port = self.conn_mgr.get_port()
+        baud = self.conn_mgr.get_baud()
         ser = None
         try:
-            self.log_msg.emit(f"Conectando em {self.port} ({self.baud} baud)...", "info")
+            self.log_msg.emit(f"Conectando em {port} ({baud} baud)...", "info")
             # rtscts=False é vital para o controle manual do pino RTS
-            ser = serial.Serial(self.port, self.baud, rtscts=False, dsrdtr=False, timeout=2)
+            ser = serial.Serial(port, baud, rtscts=False, dsrdtr=False, timeout=2)
             
             # Garante que o SoC comece rodando (RTS High costuma ser 0V em conversores, liberando o Reset)
             ser.rts = True 
