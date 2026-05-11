@@ -4,9 +4,11 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QPlainTextEdit, QTextEdit, 
                              QFrame, QSplitter, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QAbstractItemView, QStackedWidget, 
-                             QProgressBar, QSizePolicy) # <-- Adicione o QSizePolicy aqui
+                             QProgressBar, QSizePolicy,
+                             QDialog, QFormLayout, QLineEdit, QComboBox, QDialogButtonBox) # <-- Adicionados imports para o Dialog
 from PyQt5.QtCore import Qt, QSize, pyqtSignal, QUrl
 from PyQt5.QtGui import QColor, QTextFormat, QTextCursor, QDesktopServices
+from core.connection_manager import ConnectionManager
 import qtawesome as qta
 
 from .highlighter import RISCVHighlighter
@@ -17,13 +19,76 @@ from .dma_widget import DMAWidget
 from .tiling_widget import TilingWidget
 from .nn_widget import NNWidget
 
+
+# ==========================================
+# JANELA POP-UP DE CONFIGURAÇÃO (GLOBAL)
+# ==========================================
+class ConnectionConfigDialog(QDialog):
+    """Janela Modal para alterar Porta e Baud Rate globalmente."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(" Configurações de Conexão")
+        self.setFixedSize(320, 160)
+        self.setStyleSheet("""
+            QDialog { background-color: #0B0D12; }
+            QLabel { color: #8B9BB4; font-weight: bold; font-family: 'Consolas', monospace; font-size: 12px;}
+            QLineEdit, QComboBox {
+                background-color: #12141A;
+                color: #6CA1A2;
+                border: 1px solid #2A2F3A;
+                border-radius: 4px;
+                padding: 6px;
+                font-family: 'Consolas', monospace;
+                font-weight: bold;
+            }
+            QPushButton {
+                background-color: transparent;
+                color: #E2E8F0;
+                border: 1px solid #2A2F3A;
+                border-radius: 4px;
+                padding: 6px 15px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #12141A; border: 1px solid #6CA1A2; }
+        """)
+
+        layout = QFormLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        self.conn_mgr = ConnectionManager()
+
+        self.port_input = QLineEdit(self.conn_mgr.get_port())
+        
+        self.baud_input = QComboBox()
+        self.baud_input.addItems(["9600", "115200", "460800", "921600", "1000000"])
+        self.baud_input.setCurrentText(str(self.conn_mgr.get_baud()))
+
+        layout.addRow("Porta Serial:", self.port_input)
+        layout.addRow("Baud Rate:", self.baud_input)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        
+        # Destaque no botão de salvar
+        buttons.button(QDialogButtonBox.Save).setStyleSheet("color: #5DB373; border-color: #5DB373;")
+        layout.addWidget(buttons)
+
+    def get_values(self):
+        return self.port_input.text(), int(self.baud_input.currentText())
+
+
+# ==========================================
+# WIDGET DO EMULADOR RV32I
+# ==========================================
 class RV32IWidget(QWidget):
     """Isolamos o layout do Emulador RV32I em um Widget próprio."""
     request_reset = pyqtSignal(str)
-    request_reset_fpga = pyqtSignal() # <-- Novo sinal para o Reset Sincronizado
+    request_reset_fpga = pyqtSignal()
     request_step = pyqtSignal()
     request_run_toggle = pyqtSignal()
-    request_upload = pyqtSignal()     # <-- Novo sinal para o Upload
+    request_upload = pyqtSignal()     
     request_sync_fpga = pyqtSignal()
 
     def __init__(self):
@@ -32,15 +97,11 @@ class RV32IWidget(QWidget):
         w_layout.setContentsMargins(30, 20, 30, 30)
         w_layout.setSpacing(20)
         
-        # ==========================================
-        # CRIAÇÃO DOS COMPONENTES VISUAIS
-        # ==========================================
-        
-        # 1. Pipeline (Agora expansível e mais alto)
+        # 1. Pipeline
         pipeline_frame = QFrame()
         pipeline_frame.setStyleSheet("background-color: #0B0D12; border: 1px solid #2A2F3A; border-radius: 4px; padding: 2px;")
-        pipeline_frame.setFixedHeight(34) # <-- Altura travada para ficar igual aos botões
-        pipeline_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed) # <-- Faz o widget esticar na largura
+        pipeline_frame.setFixedHeight(34)
+        pipeline_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         
         pipe_layout = QHBoxLayout(pipeline_frame)
         pipe_layout.setContentsMargins(2, 2, 2, 2)
@@ -51,7 +112,7 @@ class RV32IWidget(QWidget):
             lbl = QLabel(s)
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setProperty("class", "PipelineStage")
-            lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) # <-- Faz as caixinhas internas esticarem juntas
+            lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             self.stage_labels.append(lbl)
             pipe_layout.addWidget(lbl)
             
@@ -77,18 +138,18 @@ class RV32IWidget(QWidget):
         self.btn_sync.setStyleSheet("background-color: #6366f1; color: white; border: none;")
         self.btn_sync.clicked.connect(self.request_sync_fpga.emit)
 
-        # 3. Botão de Upload e Barra de Progresso (Mesma altura e largura expansiva)
+        # 3. Botão de Upload e Barra de Progresso
         self.btn_upload = QPushButton(" Upload FPGA")
         self.btn_upload.setIcon(qta.icon('fa5s.cloud-upload-alt', color='white'))
         self.btn_upload.setProperty("class", "ActionBtn SuccessBtn")
-        self.btn_upload.setFixedHeight(34) # <-- Altura igual à barra de progresso
+        self.btn_upload.setFixedHeight(34)
         self.btn_upload.clicked.connect(self.request_upload.emit)
 
         self.progressBar = QProgressBar()
         self.progressBar.setRange(0, 100)
         self.progressBar.setValue(0)
-        self.progressBar.setFixedHeight(34) # <-- Altura igual ao botão
-        self.progressBar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed) # <-- Obriga a barra a engolir o espaço vazio
+        self.progressBar.setFixedHeight(34)
+        self.progressBar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.progressBar.setStyleSheet("""
             QProgressBar { border: 1px solid #2A2F3A; border-radius: 4px; text-align: center; color: white; background-color: #0B0D12;}
             QProgressBar::chunk { background-color: #5DB373; border-radius: 3px; }
@@ -100,23 +161,20 @@ class RV32IWidget(QWidget):
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.setHandleWidth(25)
         
-        # --- PAINEL ESQUERDO (Código + Botões de Emulação/Upload) ---
+        # --- PAINEL ESQUERDO ---
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Linha superior do painel esquerdo
         top_editor_layout = QHBoxLayout()
-        # Cria o ícone via qtawesome
         editor_icon = QLabel()
         editor_icon.setPixmap(qta.icon('fa5s.file-code', color='#8B9BB4').pixmap(16, 16))
         top_editor_layout.addWidget(editor_icon)
         
-        # Cria o texto puro (sem emojis)
         editor_label = QLabel("Código Assembly")
         editor_label.setStyleSheet("font-weight:700; color:#8B9BB4; background-color: transparent;")
         top_editor_layout.addWidget(editor_label)
-        top_editor_layout.addStretch() # Empurra os botões para a direita
+        top_editor_layout.addStretch()
         top_editor_layout.addWidget(self.btn_reset)
         top_editor_layout.addWidget(self.btn_step)
         top_editor_layout.addWidget(self.btn_run)
@@ -124,7 +182,6 @@ class RV32IWidget(QWidget):
         
         left_layout.addLayout(top_editor_layout)
         
-        # Editor de Código
         self.editor = QPlainTextEdit()
         self.editor.setViewportMargins(15, 0, 0, 0)
         self.highlighter = RISCVHighlighter(self.editor.document())
@@ -132,26 +189,23 @@ class RV32IWidget(QWidget):
         self.editor.setPlainText(code)
         left_layout.addWidget(self.editor)
         
-        # Linha inferior do painel esquerdo
         bottom_editor_layout = QHBoxLayout()
-        bottom_editor_layout.setContentsMargins(0, 10, 0, 0) # Espaço entre o editor e a barra
-        bottom_editor_layout.addWidget(self.progressBar) # Sem 'addStretch', a barra estica!
+        bottom_editor_layout.setContentsMargins(0, 10, 0, 0)
+        bottom_editor_layout.addWidget(self.progressBar)
         bottom_editor_layout.addWidget(self.btn_upload)
         
         left_layout.addLayout(bottom_editor_layout)
         
-        # --- PAINEL DIREITO (Pipeline + Tabelas) ---
+        # --- PAINEL DIREITO ---
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Adiciona o Pipeline DIRETAMENTE (assume a largura total das tabelas)
         right_layout.addWidget(pipeline_frame)
-        right_layout.addSpacing(10) # Respiro visual
+        right_layout.addSpacing(10)
         
         hw_splitter = QSplitter(Qt.Vertical)
         
-        # Estilo forçado das tabelas
         tabela_moderna_css = """
             QTableWidget { border: none; background-color: transparent; }
             QHeaderView::section { background-color: transparent; color: #6CA1A2; border: none; border-bottom: 2px solid #6CA1A2; font-size: 12px; font-weight: bold; padding: 4px; }
@@ -253,53 +307,36 @@ class RV32IWidget(QWidget):
             self.btn_run.setIcon(qta.icon('fa5s.play', color='white'))
 
     def update_memory_view(self, address: int, value: int):
-        """Atualiza ou insere um endereço na tabela de RAM dinamicamente."""
-        
-        # Formata o endereço para Hex com 8 dígitos (ex: 0x00000010)
         addr_hex = f"0x{address:08X}" 
-        
-        # 1. Verifica se o endereço já existe na tabela
         for row in range(self.mem_table.rowCount()):
             item = self.mem_table.item(row, 0)
             if item and item.text() == addr_hex:
-                # Atualiza o valor do endereço existente
                 self.mem_table.item(row, 1).setText(str(value))
                 return
 
-        # 2. Se o endereço não existe, insere uma nova linha
         row_idx = self.mem_table.rowCount()
         self.mem_table.insertRow(row_idx)
-        
-        # Utiliza o seu método _create_item com as cores do novo tema
-        # Branco/Gelo (#F3F3F3) para o endereço e Teal (#6CA1A2) para o valor
         self.mem_table.setItem(row_idx, 0, self._create_item(addr_hex, "#F3F3F3"))
         self.mem_table.setItem(row_idx, 1, self._create_item(str(value), "#6CA1A2"))
-        
-        # 3. Ordena a tabela pela primeira coluna (Endereço) em ordem crescente
         self.mem_table.sortItems(0, Qt.AscendingOrder)
 
-# Dentro da classe RV32IWidget em ui/main_window.py
-
     def update_hardware_ui(self, regs: list, memory: dict, stage: int):
-        # Atualiza Labels de Pipeline
         for i, lbl in enumerate(self.stage_labels):
             lbl.setProperty("class", "PipelineStageActive" if i == stage else "PipelineStage")
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
 
-        # Atualiza Registradores com as cores do tema novo
         for i in range(32):
             current_val = regs[i]
             item = self.reg_table.item(i, 2)
             if int(item.text()) != current_val:
                 item.setText(str(current_val))
-                item.setBackground(QColor("#2A2F3A")) # Destaque escuro
-                item.setForeground(QColor("#DC673E")) # Laranja (Mudança)
+                item.setBackground(QColor("#2A2F3A")) 
+                item.setForeground(QColor("#DC673E")) 
             else:
                 item.setBackground(QColor("transparent"))
-                item.setForeground(QColor("#6CA1A2")) # Teal (Estável)
+                item.setForeground(QColor("#6CA1A2")) 
 
-        # Atualiza Memória RAM
         for row in range(self.mem_table.rowCount()):
             addr_item = self.mem_table.item(row, 0)
             val_item = self.mem_table.item(row, 1)
@@ -324,12 +361,18 @@ class RV32IWidget(QWidget):
         self.editor.setExtraSelections(extra_selections)
 
 
+# ==========================================
+# JANELA PRINCIPAL DA APLICAÇÃO
+# ==========================================
 class RiscVEduApp(QMainWindow):
     """A Janela Global que abriga a Sidebar e o StackedWidget com os laboratórios."""
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Plataforma Educacional RISC-V")
         self.resize(1400, 850)
+        
+        # Inicia o Gerenciador Global
+        self.conn_mgr = ConnectionManager()
         
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -340,10 +383,9 @@ class RiscVEduApp(QMainWindow):
         self.setup_sidebar()
         self.setup_main_area()
 
-    # --- PONTES (PROXY) PARA O CONTROLLER ---
-    # Isso permite que o MainController converse com RiscVEduApp 
-    # como se estivesse conversando diretamente com a aba RV32IWidget
-    
+        # Inscreve-se nas atualizações de configuração
+        self.conn_mgr.config_updated.connect(self.update_global_header)
+
     @property
     def request_reset(self): return self.rv32i_view.request_reset
     @property
@@ -355,7 +397,7 @@ class RiscVEduApp(QMainWindow):
     @property
     def request_upload(self): return self.rv32i_view.request_upload
     @property
-    def request_sync_fpga(self): return self.rv32i_view.request_sync_fpga # <--- NOVA PONTE
+    def request_sync_fpga(self): return self.rv32i_view.request_sync_fpga 
     @property
     def editor(self): return self.rv32i_view.editor
     @property
@@ -371,7 +413,6 @@ class RiscVEduApp(QMainWindow):
         self.rv32i_view.update_hardware_ui(regs, memory, stage)
     def highlight_line(self, line_idx: int): 
         self.rv32i_view.highlight_line(line_idx)
-    # ----------------------------------------
 
     def setup_sidebar(self):
         self.sidebar = QFrame()
@@ -383,7 +424,6 @@ class RiscVEduApp(QMainWindow):
         
         title = QLabel("RISC-V Edu Platform")
         title.setObjectName("AppTitle")
-        # Força as bordas oficiais inline, corrigindo o "buraco" vertical causado pelo patch do main.py
         title.setStyleSheet("border-bottom: 1px solid #2A2F3A; border-right: 1px solid #2A2F3A; background-color: #0B0D12;")
         layout.addWidget(title)
         
@@ -413,8 +453,7 @@ class RiscVEduApp(QMainWindow):
             self.nav_buttons.append(btn)
             layout.addWidget(btn)
             
-        layout.addStretch() # Empurra tudo para cima, esticando a aba até o final inferior
-        
+        layout.addStretch() 
         self.main_layout.addWidget(self.sidebar)
 
     def setup_main_area(self):
@@ -426,7 +465,6 @@ class RiscVEduApp(QMainWindow):
         header = QFrame()
         header.setObjectName("Header")
         header.setFixedHeight(70)
-        # Corrige a borda inferior para casar perfeitamente com a cor do tema
         header.setStyleSheet("border-bottom: 1px solid #2A2F3A; background-color: #12141A;")
         
         h_layout = QHBoxLayout(header)
@@ -437,11 +475,11 @@ class RiscVEduApp(QMainWindow):
         term_icon.setStyleSheet("border: none; background: transparent;")
         h_layout.addWidget(term_icon)
         
-        term_info = QLabel("/dev/ttyUSB0 @ 115200 baud")
-        term_info.setStyleSheet("color: #8B9BB4; font-family: monospace; font-weight: bold; border: none; background: transparent;")
-        h_layout.addWidget(term_info)
+        # AQUI usamos o ConnectionManager dinamicamente!
+        self.term_info = QLabel(f"{self.conn_mgr.get_port()} @ {self.conn_mgr.get_baud()} baud")
+        self.term_info.setStyleSheet("color: #8B9BB4; font-family: 'Consolas', monospace; font-weight: bold; border: none; background: transparent;")
+        h_layout.addWidget(self.term_info)
         
-        # --- NOVO: Status do FPGA movido para junto do COM ---
         h_layout.addSpacing(25)
         
         status_icon = QLabel()
@@ -452,11 +490,9 @@ class RiscVEduApp(QMainWindow):
         status_lbl = QLabel("FPGA SERIAL: CONNECTED")
         status_lbl.setStyleSheet("color: #10b981; font-size: 11px; font-weight: 800; border: none; background: transparent;")
         h_layout.addWidget(status_lbl)
-        # -----------------------------------------------------
         
         h_layout.addStretch()
         
-        # --- NOVOS BOTÕES DO CABEÇALHO ---
         self.btn_save = QPushButton(" Save")
         self.btn_save.setIcon(qta.icon('fa5s.save', color='#8B9BB4'))
         self.btn_save.setProperty("class", "GhostBtn")
@@ -467,9 +503,11 @@ class RiscVEduApp(QMainWindow):
         self.btn_load.setProperty("class", "GhostBtn")
         h_layout.addWidget(self.btn_load)
         
+        # CONEXÃO DO BOTÃO CONFIG
         self.btn_config = QPushButton(" Config")
         self.btn_config.setIcon(qta.icon('fa5s.cog', color='#8B9BB4'))
         self.btn_config.setProperty("class", "GhostBtn")
+        self.btn_config.clicked.connect(self.open_config_dialog)
         h_layout.addWidget(self.btn_config)
         
         self.btn_guide = QPushButton(" Guide")
@@ -477,7 +515,6 @@ class RiscVEduApp(QMainWindow):
         self.btn_guide.setProperty("class", "GhostBtn")
         self.btn_guide.clicked.connect(self.open_guide)
         h_layout.addWidget(self.btn_guide)
-        # ---------------------------------
         
         layout.addWidget(header)
         
@@ -504,13 +541,23 @@ class RiscVEduApp(QMainWindow):
         
         self.switch_lab(0, self.nav_buttons[0])
 
+    def open_config_dialog(self):
+        """Abre a janela de configurações e aplica os novos valores."""
+        dialog = ConnectionConfigDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            porta, baud = dialog.get_values()
+            # O save dispara automaticamente um evento que todas as abas vão escutar!
+            self.conn_mgr.set_config(porta, baud)
+
+    def update_global_header(self, port, baud):
+        """Callback chamada pelo Manager sempre que a porta é alterada."""
+        self.term_info.setText(f"{port} @ {baud} baud")
+
     def open_guide(self):
         url = QUrl("https://risc-v-azedinha.github.io/RISC-V/")
-        
         if not url.isValid():
             self.log("[ERRO] URL inválida.", "#ef4444")
             return
-
         QDesktopServices.openUrl(url)
 
     def switch_lab(self, index, active_btn):

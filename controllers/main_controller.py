@@ -126,7 +126,7 @@ class MainController:
         self.run_timer.timeout.connect(self.handle_step)
         
         # Worker configurado para a porta correta
-        self.fpga_worker = FPGALoader(port="COM7", baud=921600)
+        self.fpga_worker = FPGALoader()
         
         # CONEXÕES DE SINAIS (Novas Pontes)
         self.view.request_reset_fpga.connect(self.on_click_reset_fpga)
