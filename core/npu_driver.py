@@ -7,15 +7,13 @@ import numpy as np
 from core.nn_model import empacotar_pesos_dma
 
 class NPUDriverEdge:
-    def __init__(self, port, baud):
-        # rtscts=False é vital para o controle manual do pino RTS
+    def __init__(self, port, baud=921600):
+        # rtscts=False vital para controle manual do pino RTS (Reset)
         self.ser = serial.Serial(port, baud, rtscts=False, dsrdtr=False, timeout=2.0)
         self.ser.reset_input_buffer()
 
     def boot_app_bin(self, bin_path, progress_cb=None):
         """ Faz o Hard Reset da FPGA, aguarda Bootloader e envia o binário RISC-V """
-        
-        # 1. Auto Reset
         if progress_cb: progress_cb("Acionando Reset de Hardware...")
         self.ser.rts = False
         time.sleep(0.05)
@@ -26,7 +24,6 @@ class NPUDriverEdge:
         self.ser.reset_input_buffer()
         self.ser.rts = True
 
-        # 2. Wait for Bootloader
         if progress_cb: progress_cb("Aguardando sinal 'BOOT' do SoC...")
         buffer = ""
         start_time = time.time()
@@ -39,7 +36,6 @@ class NPUDriverEdge:
         else:
             raise Exception("Timeout aguardando Bootloader da FPGA.")
 
-        # 3. Handshake
         if progress_cb: progress_cb("Handshake com o Bootloader...")
         time.sleep(0.1)
         self.ser.reset_input_buffer()
@@ -55,7 +51,6 @@ class NPUDriverEdge:
         if ack != b'!':
             raise Exception(f"Sem resposta de Handshake. Recebido: {ack}")
 
-        # 4. Upload do Binário
         file_size = os.path.getsize(bin_path)
         self.ser.write(struct.pack('<I', file_size))
         time.sleep(0.05)
@@ -70,33 +65,34 @@ class NPUDriverEdge:
                 self.ser.flush()
                 time.sleep(0.002)
 
-        if progress_cb: progress_cb("Servidor SoC iniciado com sucesso!")
-        time.sleep(0.5) # Dá um tempo para o software em C iniciar e limpar buffers
+        if progress_cb: progress_cb("Servidor CNN iniciado com sucesso!")
+        time.sleep(0.5) 
         self.ser.reset_input_buffer()
 
-    def upload_modelo(self, w1, b1, w2, b2, progress_cb=None):
-        w1_packed = empacotar_pesos_dma(w1)
-        w2_packed = empacotar_pesos_dma(w2)
+    def upload_modelo(self, w_conv, b_conv, w_fc, b_fc, progress_cb=None):
+        """ Envia os pesos e bias da Conv2D e da camada Fully Connected para a NPU. """
+        w_conv_packed = empacotar_pesos_dma(w_conv)
+        w_fc_packed = empacotar_pesos_dma(w_fc)
         
-        if progress_cb: progress_cb("A enviar W1 (100 KB)...")
+        if progress_cb: progress_cb("A enviar W_conv (Conv2D Kernel)...")
         self.ser.write(struct.pack('>B', 0xAA))
-        for val in w1_packed: self.ser.write(struct.pack('>I', val & 0xFFFFFFFF))
+        for val in w_conv_packed: self.ser.write(struct.pack('>I', val & 0xFFFFFFFF))
         assert self.ser.read(1) == b'A'
 
-        if progress_cb: progress_cb("A enviar B1 (512 Bytes)...")
+        if progress_cb: progress_cb("A enviar B_conv (Conv2D Bias)...")
         self.ser.write(struct.pack('>B', 0xBB))
-        for val in b1: self.ser.write(struct.pack('>i', val))
+        for val in b_conv: self.ser.write(struct.pack('>i', val))
         assert self.ser.read(1) == b'B'
 
-        if progress_cb: progress_cb("A enviar W2 (1.5 KB)...")
+        if progress_cb: progress_cb("A enviar W_fc (Fully Connected)...")
         self.ser.write(struct.pack('>B', 0xCC))
-        for val in w2_packed: self.ser.write(struct.pack('>I', val & 0xFFFFFFFF))
+        for val in w_fc_packed: self.ser.write(struct.pack('>I', val & 0xFFFFFFFF))
         assert self.ser.read(1) == b'C'
 
-        if progress_cb: progress_cb("A enviar B2...")
-        b2_padded = np.pad(b2, (0, 12 - len(b2)), mode='constant')
+        if progress_cb: progress_cb("A enviar B_fc (Classes Bias)...")
+        b_fc_padded = np.pad(b_fc, (0, 12 - len(b_fc)), mode='constant')
         self.ser.write(struct.pack('>B', 0xDD))
-        for val in b2_padded: self.ser.write(struct.pack('>i', val))
+        for val in b_fc_padded: self.ser.write(struct.pack('>i', val))
         assert self.ser.read(1) == b'D'
         
     def inferir(self, image_int8):

@@ -537,9 +537,8 @@ class NNWidget(QWidget):
                 
                 logits_np = np.array(logits, dtype=np.float64)
 
-                # T é a Temperatura. Valores maiores "espalham" mais a incerteza.
-                # Comece testando com 100.0, 500.0 ou 1000.0 dependendo do tamanho bruto 
-                # dos inteiros que saem dos acumuladores da sua NPU.
+                # Ajuste a temperatura 'T' para calibrar a barra de porcentagem 
+                # (10.0 ou 20.0 geralmente é ideal dependendo da escala do FC na placa)
                 T = 15.0
                 logits_scaled = logits_np / T
 
@@ -549,7 +548,7 @@ class NNWidget(QWidget):
                 top_digit = int(np.argmax(logits_np))
                 
                 self._update_results(top_digit, probs)
-                self.lbl_status.setText(f"Inferência Executada no Hardware | PREDIÇÃO: {top_digit} | LATÊNCIA: {latencia:.1f} ms")
+                self.lbl_status.setText(f"Inferncia Conv2D no Hardware | PREDIÇÃO: {top_digit} | LATÊNCIA: {latencia:.1f} ms")
             except Exception as e:
                 self.lbl_status.setText(f"Erro ao processar inferência na FPGA: {str(e)} ❌")
                 self.lbl_status.setStyleSheet(f"color: {NEON_RED}; font-size: 14px; font-weight: bold; background: {BG_ELEMENT}; border: 1px solid {NEON_RED}; border-radius: 6px; padding: 10px;")
