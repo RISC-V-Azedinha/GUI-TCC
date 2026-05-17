@@ -69,6 +69,7 @@ def main():
     
     rv32i_controller.io_view = main_window.io_view
     main_window.io_view.request_compile_and_upload.connect(rv32i_controller.handle_io_compile_upload)
+    main_window.io_view.request_uart_send.connect(rv32i_controller.handle_io_uart_transmit)
     
     npu_model = NPUModel()
     npu_controller = NPUController(npu_model, main_window.npu_view)

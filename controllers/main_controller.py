@@ -135,6 +135,10 @@ class MainController:
         self.view.request_clr_bkp.connect(self.handle_clr_bkp)
         self.view.editor.textChanged.connect(self.on_editor_changed)
 
+        if hasattr(self, 'io_view') or True:
+            # Isso pode ser feito aqui ou logo após registrar a io_view no main.py
+            pass
+
         self.view.btn_sync.setText(" Disconnect HW")
         self.view.btn_sync.setIcon(qta.icon('fa5s.unlink', color='white'))
         self.view.btn_sync.setStyleSheet("background-color: #ef4444; color: white; border: none;")
@@ -207,6 +211,17 @@ class MainController:
                 
                 self.view.update_hardware_ui(regs, self.model.memory, 0)
                 self.view.highlight_line(self.model.get_current_line())
+
+    def handle_io_uart_transmit(self, char_str):
+        """Transmite dados brutos em tempo real para a CPU RISC-V via USB-UART."""
+        if self.exec_mode == 'HW':
+            ser = self._get_serial()
+            if ser and ser.is_open:
+                try:
+                    # Codifica o caractere (ex: 'A' -> b'A') e joga no canal físico
+                    ser.write(char_str.encode('utf-8', errors='ignore'))
+                except Exception as e:
+                    print(f"Erro na transmissão interactiva UART: {e}")
 
     def on_editor_changed(self):
         """Callback disparado instantaneamente a cada tecla digitada no editor de código."""
@@ -380,32 +395,36 @@ class MainController:
             ser = self._get_serial()
             
             if self.hw_running:
-                # Se estamos a rodar livremente, usamos os Ticks do Timer para "escutar" a placa
                 if ser and ser.in_waiting:
                     try:
-                        chunk = ser.read(ser.in_waiting)
-                        if b'\xBB' in chunk: # A placa envia 0xBB quando bate no Breakpoint!
-                            self.display_log("🚨 BREAKPOINT DE HARDWARE ATINGIDO!", "error")
-                            
-                            # Força a interface a entrar em Modo Pausa
-                            self.run_timer.stop()
-                            self.hw_running = False
-                            self.view.set_run_state(False) # Muda a cor do botão de volta para Azul!
-                            
-                            # Assume o controlo físico
-                            ser.rts = False
-                            time.sleep(0.01)
-                            ser.write(b'\xCA\xFE\xBA\xBE')
-                            time.sleep(0.02)
-                            
-                            self._auto_sync() # Atualiza o Highlight roxo e os registradores
-                    except:
-                        pass
+                        # --- MODIFICAÇÃO DO ROTEAR DE TRAFEGO ---
+                        # Se a aba ativa for a do Laboratório 2 (I/O)
+                        if hasattr(self, 'io_view') and self.io_view.isVisible():
+                            chunk = ser.read(ser.in_waiting)
+                            text = chunk.decode('utf-8', errors='ignore')
+                            if text:
+                                # Joga os dados capturados direto na janela do terminal!
+                                self.io_view.append_uart_output(text)
+                        else:
+                            # Caso contrário, mantém o comportamento original de Debug / Breakpoint (Lab 1)
+                            chunk = ser.read(ser.in_waiting)
+                            if b'\xBB' in chunk: 
+                                self.display_log("🚨 BREAKPOINT DE HARDWARE ATINGIDO!", "error")
+                                self.run_timer.stop()
+                                self.hw_running = False
+                                self.view.set_run_state(False)
+                                ser.rts = False
+                                time.sleep(0.01)
+                                ser.write(b'\xCA\xFE\xBA\xBE')
+                                time.sleep(0.02)
+                                self._auto_sync()
+                    except Exception as e:
+                        print(f"Erro no Polling Serial: {e}")
             else:
-                # MODO PAUSADO: Executa um Step Limpo Manual (Agora funciona!)
+                # MODO PAUSADO (Mantém igual)
                 if ser:
                     ser.rts = False
-                    ser.write(b'\x03') # CMD_STEP
+                    ser.write(b'\x03') 
                     time.sleep(0.01)   
                     self._auto_sync()
 
@@ -755,16 +774,17 @@ class MainController:
                 self.exec_mode = 'HW'
                 self.hw_running = True
                 
-                # ==============================================================
-                # SOLUÇÃO: Libera a FPGA do estado de Halt gerado pelo FPGALoader
-                # ==============================================================
                 ser = self._get_serial()
                 if ser:
                     ser.write(b'\x02') # CMD_RESUME (Dá o "Play" no processador)
                     time.sleep(0.01)
                     ser.rts = True     # Libera o controle do barramento de Debug
-                # ==============================================================
-                
+                    
+                    # =========================================================
+                    # A LINHA QUE FALTAVA: Ligar a "escuta" da Serial na GUI!
+                    self.run_timer.start(50) # Atualiza o terminal a cada 50ms
+                    # =========================================================
+                    
             else:
                 self.io_view.log("[ERRO] Falha na comunicação com a FPGA durante o envio.", "#ef4444")
             
