@@ -65,6 +65,7 @@ def main():
     
     rv32i_model = RISCV_Emulator()
     rv32i_controller = MainController(rv32i_model, main_window.rv32i_view)
+    main_window.stacked_widget.currentChanged.connect(rv32i_controller.on_tab_changed)
     
     npu_model = NPUModel()
     npu_controller = NPUController(npu_model, main_window.npu_view)

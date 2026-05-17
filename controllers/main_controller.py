@@ -199,6 +199,57 @@ class MainController:
                 self.view.update_hardware_ui(regs, self.model.memory, 0)
                 self.view.highlight_line(self.model.get_current_line())
 
+    def on_tab_changed(self, index):
+        """Disparado quando a aba do QStackedWidget muda."""
+        # Se o usuário saiu da aba do Core RV32I (Índice 0)
+        if index != 0:
+            # 1. Interrompe cronômetros e timers de execução em background
+            self.run_timer.stop()
+            self.hw_running = False
+            self.view.set_run_state(False)
+            
+            # 2. Zera a barra de progresso de upload e limpa o histórico de logs da UI
+            self.view.progressBar.setValue(0)
+            self.view.clear_log()
+            
+            # 3. Remove marcações visuais de linhas executadas (highlighter roxo)
+            if hasattr(self.view, 'clear_highlight'):
+                self.view.clear_highlight()
+            else:
+                self.view.highlight_line(-1) # Força um índice inválido para remover o destaque
+                
+            # 4. Remove os break-points do hardware e aciona rotinas de limpeza visual
+            self.handle_clr_bkp()
+            if hasattr(self.view, 'clear_breakpoints_ui'):
+                self.view.clear_breakpoints_ui()
+            
+            # 5. Restabelece o hardware para o estado inicial se estivesse conectado em modo placa
+            if self.exec_mode == 'HW':
+                ser = self._get_serial()
+                if ser:
+                    try:
+                        ser.rts = False
+                        ser.write(b'\x09\x00\x00\x00\x00') # Configura PC de Boot = ROM (0x00000000)
+                        time.sleep(0.01)
+                        ser.write(b'\x08')                 # Emite comando de Reset / Halt
+                        time.sleep(0.01)
+                        ser.write(b'\x0A')                 # Força limpeza física dos registradores
+                        ser.reset_input_buffer()
+                    except Exception as e:
+                        print(f"Erro ao resetar hardware na troca de aba: {e}")
+            
+            # 6. Zera completamente o estado interno do emulador de simulação local
+            self.model.regs = [0] * 32
+            self.model.pc = 0
+            self.model.stage = 0
+            self.model.halted = False
+            
+            # Atualiza o painel de registradores e limpa o mapeamento de memória na interface
+            self.view.update_hardware_ui(self.model.regs, {}, 0)
+            
+            # Retorna o estado operacional padrão para o modo de simulação local seguro
+            self.exec_mode = 'SIM'
+
     def on_upload_finished(self, success):
         """Ao terminar de subir código, entramos oficialmente no Modo Hardware!"""
         if success:
