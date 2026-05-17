@@ -56,12 +56,29 @@ class FPGALoader(QThread):
 
     def execute_reset(self, ser):
         self.log_msg.emit("Enviando sinal de Reset via Hardware...", "info")
-        ser.rts = False # Ativa Reset (Geralmente 3.3V no pino)
-        time.sleep(0.1)
-        ser.write(b'\xCA\xFE\xBA\xBE') # Magic Word para o debug_controller
-        ser.write(b'\x04')             # CMD_RESET
-        time.sleep(0.1)
-        ser.rts = True  # Libera CPU
+        
+        # 1. Arma o Debugger
+        ser.rts = False
+        time.sleep(0.05)
+        
+        # 2. Magic Word
+        ser.write(b'\xCA\xFE\xBA\xBE')
+        time.sleep(0.05)
+        
+        # 3. Configura Boot para 0x00000000 (ROM)
+        ser.write(b'\x09\x00\x00\x00\x00')
+        time.sleep(0.01)
+        
+        # 4. Envia Reset Halt (0x08)
+        ser.write(b'\x08')
+        time.sleep(0.05)
+        
+        # 5. Limpa a sujeira antes de liberar
+        ser.reset_input_buffer()
+        
+        # 6. Libera CPU para rodar
+        ser.rts = True  
+        
         if self.mode == 'reset':
             self.log_msg.emit("Hardware Reset finalizado com sucesso.", "success")
 
@@ -139,17 +156,29 @@ class FPGALoader(QThread):
         self.log_msg.emit("Upload finalizado. Colocando CPU em standby...", "info")
         
         # ======================================================================
-        # 6. ESTADO DE ESPERA (A chave para não rodar sozinho)
+        # 6. ESTADO DE ESPERA E PREPARAÇÃO DA RAM
         # ======================================================================
-        # Após o upload, enviamos um comando de HALT e seguramos o RTS.
-        # Isso impede que o processador comece a iteração do Fibonacci antes do Run.
+        # Após o upload (que ocorreu na ROM), precisamos apontar a CPU para 
+        # o endereço inicial da RAM e pausá-la no aguardo do botão "Run".
         
-        ser.rts = False # Mantém o sinal de controle ativado
+        ser.rts = False 
         time.sleep(0.05)
-        ser.write(b'\xCA\xFE\xBA\xBE') # Magic Word
-        ser.write(b'\x01')             # CMD_HALT (Sinaliza ao seu debug_controller para pausar)
         
-        self.log_msg.emit("Sistema pronto. Clique em 'Run' para iniciar.", "success")
+        ser.write(b'\xCA\xFE\xBA\xBE') # Magic Word
+        time.sleep(0.05)
+        
+        # Aponta o Boot para a RAM (0x80000800 em Little Endian)
+        ser.write(b'\x09\x00\x08\x00\x80')
+        time.sleep(0.01)
+        
+        # Limpa o Banco de Registradores (CMD_CLR_REGS)
+        ser.write(b'\x0A')
+        time.sleep(0.05)
+        
+        # Dá um Reset Halt (Congela o PC no endereço da RAM, pronto para rodar)
+        ser.write(b'\x08')
+        
+        self.log_msg.emit("Sistema pronto na RAM. Clique em 'Run' para iniciar.", "success")
 
     def execute_sync(self, ser):
         ser.rts = False # Halt
