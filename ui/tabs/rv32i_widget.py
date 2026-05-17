@@ -4,12 +4,13 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QPlainTextEdit, QTextEdit, 
                              QFrame, QSplitter, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QAbstractItemView, 
-                             QProgressBar, QSizePolicy) 
+                             QProgressBar, QSizePolicy, QMenu, QAction) 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QTextFormat, QTextCursor
 import qtawesome as qta
 
 from ..components.highlighter import RISCVHighlighter
+from artefacts import sample_code
 
 # ==========================================
 # WIDGET DO EMULADOR RV32I
@@ -22,6 +23,8 @@ class RV32IWidget(QWidget):
     request_run_toggle = pyqtSignal()
     request_upload = pyqtSignal()     
     request_sync_fpga = pyqtSignal()
+    request_set_bkp = pyqtSignal(int)
+    request_clr_bkp = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -117,7 +120,7 @@ class RV32IWidget(QWidget):
         self.editor = QPlainTextEdit()
         self.editor.setViewportMargins(15, 0, 0, 0)
         self.highlighter = RISCVHighlighter(self.editor.document())
-        code = """# RISC-V Assembly - Fibonacci salvando em Memoria\n.global _start\n\n_start:\n    li t0, 0\n    li t1, 1\n    li t2, 10\n    li t3, 0\n    li t5, 0\n\nfib_loop:\n    beq t3, t2, end\n    sw t0, 0(t5)\n    add t4, t0, t1\n    mv t0, t1\n    mv t1, t4\n    addi t3, t3, 1\n    addi t5, t5, 4\n    j fib_loop\n\nend:\n    wfi"""
+        code = sample_code.code
         self.editor.setPlainText(code)
         left_layout.addWidget(self.editor)
         
@@ -215,6 +218,12 @@ class RV32IWidget(QWidget):
         self.console.setFixedHeight(140)
         self.console.append(">> Ambiente Emulador Multiciclo Inicializado com Sucesso.")
         w_layout.addWidget(self.console)
+        
+        # Setup do Context Menu para Breakpoints
+        self.editor.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.editor.customContextMenuRequested.connect(self.show_editor_menu)
+        self.bkp_line_idx = -1
+        self.current_exec_line = -1
 
     def _create_item(self, text: str, color: str = "#e2e8f0") -> QTableWidgetItem:
         item = QTableWidgetItem(text)
@@ -231,12 +240,17 @@ class RV32IWidget(QWidget):
         self.console.clear()
 
     def set_run_state(self, is_running: bool):
+        """Altera o texto, ícone e cor do botão para refletir o estado."""
         if is_running:
             self.btn_run.setText(" Pause")
             self.btn_run.setIcon(qta.icon('fa5s.pause', color='white'))
+            # Fundo Laranja (Alerta) quando está a rodar e o botão serve para pausar
+            self.btn_run.setStyleSheet("background-color: #f59e0b; color: white; border: none; font-weight: bold; border-radius: 4px;")
         else:
             self.btn_run.setText(" Run")
             self.btn_run.setIcon(qta.icon('fa5s.play', color='white'))
+            # Fundo Azul (Ação) quando está parado e o botão serve para rodar
+            self.btn_run.setStyleSheet("background-color: #3b82f6; color: white; border: none; font-weight: bold; border-radius: 4px;")
 
     def update_memory_view(self, address: int, value: int):
         addr_hex = f"0x{address:08X}" 
@@ -282,16 +296,67 @@ class RV32IWidget(QWidget):
                 if int(val_item.text()) != val:
                     val_item.setText(str(val))
                     val_item.setForeground(QColor("#DC673E"))
+        
+    def show_editor_menu(self, position):
+        menu = QMenu()
+        menu.setStyleSheet("QMenu { background-color: #1A1D24; color: #E2E8F0; border: 1px solid #2A2F3A; } QMenu::item:selected { background-color: #3B82F6; }")
+        
+        toggle_bkp_action = QAction("🔴 Toggle Breakpoint nesta linha", self)
+        toggle_bkp_action.triggered.connect(self.toggle_breakpoint)
+        menu.addAction(toggle_bkp_action)
+        
+        # Adiciona a ação padrão de limpar BKP
+        clear_bkp_action = QAction("⭕ Limpar Breakpoint", self)
+        clear_bkp_action.triggered.connect(self.clear_breakpoint)
+        menu.addAction(clear_bkp_action)
+        
+        menu.exec_(self.editor.viewport().mapToGlobal(position))
+
+    def update_editor_highlights(self):
+        """Renderizador unificado com posicionamento absoluto de bloco."""
+        selections = []
+
+        # 1. Pinta o Breakpoint (Vermelho Escuro)
+        if self.bkp_line_idx >= 0:
+            sel_bkp = QTextEdit.ExtraSelection()
+            sel_bkp.format.setBackground(QColor("#451a1e"))
+            sel_bkp.format.setProperty(QTextFormat.FullWidthSelection, True)
+            cursor = self.editor.textCursor()
+            # NOVA LÓGICA: Posicionamento absoluto e infalível
+            cursor.setPosition(self.editor.document().findBlockByNumber(self.bkp_line_idx).position())
+            sel_bkp.cursor = cursor
+            selections.append(sel_bkp)
+
+        # 2. Pinta a Linha de Execução Atual do PC (Azul Escuro)
+        if self.current_exec_line >= 0:
+            sel_exec = QTextEdit.ExtraSelection()
+            if self.current_exec_line == self.bkp_line_idx:
+                sel_exec.format.setBackground(QColor("#4c1d95")) 
+            else:
+                sel_exec.format.setBackground(QColor("#1e293b")) 
+                
+            sel_exec.format.setProperty(QTextFormat.FullWidthSelection, True)
+            cursor = self.editor.textCursor()
+            # NOVA LÓGICA: Posicionamento absoluto e infalível
+            cursor.setPosition(self.editor.document().findBlockByNumber(self.current_exec_line).position())
+            sel_exec.cursor = cursor
+            selections.append(sel_exec)
+
+        self.editor.setExtraSelections(selections)
 
     def highlight_line(self, line_idx: int):
-        extra_selections = []
-        if line_idx >= 0:
-            selection = QTextEdit.ExtraSelection()
-            selection.format.setBackground(QColor("#1e293b")) 
-            selection.format.setProperty(QTextFormat.FullWidthSelection, True)
-            cursor = self.editor.textCursor()
-            cursor.setPosition(0)
-            cursor.movePosition(QTextCursor.Down, QTextCursor.MoveAnchor, line_idx)
-            selection.cursor = cursor
-            extra_selections.append(selection)
-        self.editor.setExtraSelections(extra_selections)
+        self.current_exec_line = line_idx
+        self.update_editor_highlights()
+
+    def toggle_breakpoint(self):
+        cursor = self.editor.textCursor()
+        self.bkp_line_idx = cursor.blockNumber()
+        self.update_editor_highlights() 
+        self.request_set_bkp.emit(self.bkp_line_idx)
+
+    def clear_breakpoint(self):
+        self.bkp_line_idx = -1
+        self.update_editor_highlights() 
+        self.request_clr_bkp.emit()
+
+    
