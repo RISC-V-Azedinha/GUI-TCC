@@ -19,7 +19,10 @@ class NPUDriverEdge:
         time.sleep(0.05)
         self.ser.write(b'\xCA\xFE\xBA\xBE')
         time.sleep(0.05)
-        self.ser.write(b'\x04')
+        self.ser.write(b'\x09\x00\x00\x00\x00')
+        time.sleep(0.01)
+        self.ser.write(b'\x08')
+        time.sleep(0.05)
         time.sleep(0.05)
         self.ser.reset_input_buffer()
         self.ser.rts = True

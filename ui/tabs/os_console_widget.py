@@ -139,8 +139,11 @@ class SerialMonitorWorker(QThread):
             self.ser.rts = False
             time.sleep(0.1)
             self.ser.write(b'\xCA\xFE\xBA\xBE')
-            self.ser.write(b'\x04')
-            time.sleep(0.1)
+            time.sleep(0.05)
+            self.ser.write(b'\x09\x00\x00\x00\x00')
+            time.sleep(0.01)
+            self.ser.write(b'\x08')
+            time.sleep(0.05)
             self.ser.rts = True
 
             self.log_msg.emit("Aguardando sinal do Bootloader da FPGA...", "info")
@@ -157,6 +160,10 @@ class SerialMonitorWorker(QThread):
             if not boot_found:
                 self.log_msg.emit("Timeout aguardando 'BOOT'. Iniciando monitor passivo.", "error")
             else:
+                # CORREÇÃO CRÍTICA: Limpa o lixo e o "\r\n" do "BOOT\r\n" antes de iniciar o Handshake
+                time.sleep(0.05)
+                self.ser.reset_input_buffer()
+                
                 self.ser.write(b'\xCA\xFE\xBA\xBE')
                 ack = b''
                 start_wait = time.time()
@@ -446,7 +453,6 @@ class OSConsoleWidget(QWidget):
         grid = QGridLayout()
         grid.setVerticalSpacing(10)
 
-        # 1. Criamos as labels dinâmicas (usando self.) para podermos alterar depois!
         self.lbl_set_port = QLabel(self.target_port)
         self.lbl_set_port.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: bold; border: none;")
         self.lbl_set_port.setAlignment(Qt.AlignRight)
@@ -455,7 +461,6 @@ class OSConsoleWidget(QWidget):
         self.lbl_set_baud.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: bold; border: none;")
         self.lbl_set_baud.setAlignment(Qt.AlignRight)
 
-        # 2. Adicionamos os Títulos ("Port", "Baud") e as labels dinâmicas nas Linhas 0 e 1 do Grid
         lbl_k_port = QLabel("Port")
         lbl_k_port.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; border: none;")
         grid.addWidget(lbl_k_port, 0, 0)
@@ -466,14 +471,12 @@ class OSConsoleWidget(QWidget):
         grid.addWidget(lbl_k_baud, 1, 0)
         grid.addWidget(self.lbl_set_baud, 1, 1)
 
-        # 3. As configurações estáticas (8N1) que nunca mudam, adicionamos num loop a partir da linha 2
         static_settings = [
             ("Data", "8 bits"),
             ("Parity", "None"),
             ("Stop", "1 bit")
         ]
         
-        # start=2 faz com que o loop coloque os itens na linha 2, 3 e 4 do Grid
         for row, (k, v) in enumerate(static_settings, start=2):
             lbl_k = QLabel(k)
             lbl_k.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; border: none;")
@@ -490,10 +493,24 @@ class OSConsoleWidget(QWidget):
         sidebar_layout.addStretch()
         main_layout.addLayout(sidebar_layout, stretch=1)
 
+        # CORREÇÃO: Inscreve este widget no evento de atualização global do ConnectionManager
+        self.conn_mgr.config_updated.connect(self.update_connection_params)
         self.worker = None
 
+    # CORREÇÃO: Função dinâmica para atualizar as variáveis e o painel de texto ao mudar a configuração global
+    def update_connection_params(self, port, baud):
+        self.target_port = port
+        self.target_baud = baud
+        self.lbl_set_port.setText(port)
+        self.lbl_set_baud.setText(str(baud))
+
     def connect_serial(self):
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # CORREÇÃO ADICIONAL: Garante que lê as configurações mais recentes imediatamente antes de abrir a porta
+        self.target_port = self.conn_mgr.get_port()
+        self.target_baud = self.conn_mgr.get_baud()
+        self.update_connection_params(self.target_port, self.target_baud)
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         kernel_path = os.path.join(base_dir, "artefacts", "kernel.bin")
         
         payload = b''
@@ -651,15 +668,10 @@ class OSConsoleWidget(QWidget):
         sb = self.console_output.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    # ==========================================
-    # EVENTOS DE CICLO DE VIDA DO WIDGET
-    # ==========================================
     def hideEvent(self, event):
-        """Garante que a porta serial é fechada e a UI resetada ao sair do laboratório."""
         self.disconnect_serial()
         super().hideEvent(event)
 
     def closeEvent(self, event):
-        """Garante a limpeza ao fechar a aplicação."""
         self.disconnect_serial()
         super().closeEvent(event)
