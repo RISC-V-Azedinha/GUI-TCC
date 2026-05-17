@@ -70,6 +70,8 @@ def main():
     npu_model = NPUModel()
     npu_controller = NPUController(npu_model, main_window.npu_view)
     
+    app.aboutToQuit.connect(rv32i_controller.cleanup_hardware)
+    
     main_window.show()
     sys.exit(app.exec_())
 

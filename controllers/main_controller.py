@@ -130,6 +130,7 @@ class MainController:
         self.view.request_reset_fpga.connect(self.handle_hw_reset) 
         self.view.request_set_bkp.connect(self.handle_set_bkp)
         self.view.request_clr_bkp.connect(self.handle_clr_bkp)
+        self.view.editor.textChanged.connect(self.on_editor_changed)
 
         self.view.btn_sync.setText(" Disconnect HW")
         self.view.btn_sync.setIcon(qta.icon('fa5s.unlink', color='white'))
@@ -172,6 +173,10 @@ class MainController:
         self.hw_running = False
         self.run_timer.stop()
         self.view.set_run_state(False)
+        
+        # Garante que a interface reflita o estado de "sem upload"
+        self.view.progressBar.setValue(0)
+        
         self.display_log("Conexão Serial Liberada. Retornando ao Modo de Simulação.", "info")
 
     def _auto_sync(self):
@@ -198,6 +203,24 @@ class MainController:
                 
                 self.view.update_hardware_ui(regs, self.model.memory, 0)
                 self.view.highlight_line(self.model.get_current_line())
+
+    def on_editor_changed(self):
+        """Callback disparado instantaneamente a cada tecla digitada no editor de código."""
+        # Só executamos a rotina de interrupção se a placa estava conectada 
+        # ou se a barra de progresso estava indicando algum upload prévio.
+        if self.exec_mode == 'HW' or self.view.progressBar.value() > 0:
+            
+            # Corta a telemetria com o Hardware
+            self.exec_mode = 'SIM'
+            self.hw_running = False
+            self.run_timer.stop()
+            self.view.set_run_state(False)
+            
+            # Zera a barra de progresso visualmente no ato da digitação
+            self.view.progressBar.setValue(0)
+            
+            # Imprime o aviso uma única vez (sem limpar a tela)
+            self.display_log("Edição detectada: Sincronia com FPGA perdida. Retornando à Simulação.", "info")
 
     def on_tab_changed(self, index):
         """Disparado quando a aba do QStackedWidget muda."""
@@ -405,22 +428,52 @@ class MainController:
         if addr is not None:
             ser = self._get_serial()
             if ser:
-                self.exec_mode = 'HW' # Garante mudança de estado ao interagir com debug
+                self.exec_mode = 'HW'
+                was_running = self.hw_running 
+                
                 ser.rts = False
-                ser.write(b'\x05') 
+                time.sleep(0.01)
+                
+                # 1. Se a FPGA estiver rodando, FORÇA o Halt para a FSM aceitar comandos
+                if was_running:
+                    ser.write(b'\xCA\xFE\xBA\xBE') # Assume o controle (Entra em Debug Mode)
+                    time.sleep(0.02) # Tempo vital para o VHDL processar a mudança de estado
+                
+                # 2. Agora a placa está ouvindo: Envia o comando de Set BKP
+                ser.write(b'\x05')
                 ser.write(struct.pack('<I', addr))
                 time.sleep(0.01)
                 self.display_log(f"BKP Armado na RAM em 0x{addr:08X}", "error")
+                
+                # 3. Se estava rodando antes, devolve para o Run State
+                if was_running:
+                    ser.write(b'\x02') # CMD_RESUME
+                    time.sleep(0.01)
+                    ser.rts = True     # Libera a placa
         else:
             self.display_log("Linha inválida para BKP.", "error")
 
     def handle_clr_bkp(self):
         ser = self._get_serial()
         if ser:
+            was_running = self.hw_running
+            
             ser.rts = False
-            ser.write(b'\x06') 
+            time.sleep(0.01)
+            
+            # Mesma lógica para limpar: precisa estar em Halt
+            if was_running:
+                ser.write(b'\xCA\xFE\xBA\xBE')
+                time.sleep(0.02)
+
+            ser.write(b'\x06')
             time.sleep(0.01)
             self.display_log("BKP Removido.", "success")
+            
+            if was_running:
+                ser.write(b'\x02') # CMD_RESUME
+                time.sleep(0.01)
+                ser.rts = True
 
     def display_log(self, message, msg_type):
         colors = {"error": "#ef4444", "success": "#10b981", "info": "#38bdf8"}
@@ -449,12 +502,55 @@ class MainController:
     def _check_code_changes(self):
         """Verifica se o usuário alterou o código e garante o sincronismo."""
         current_code = self.view.editor.toPlainText()
+        
         if current_code != self.loaded_code:
-            if self.exec_mode == 'SIM':
-                self.handle_reset(current_code)
+            was_hw = (self.exec_mode == 'HW')
+            
+            # 1. Força a queda imediata para o modo de Simulação e para o hardware
+            self.exec_mode = 'SIM'
+            self.hw_running = False
+            
+            # 2. Zera a barra de progresso visualmente
+            self.view.progressBar.setValue(0)
+            
+            # 3. Reseta o emulador local com o novo código (Isso limpa os logs antigos)
+            self.handle_reset(current_code)
+            
+            # 4. Imprime as mensagens de aviso sobre o que acabou de acontecer
+            if was_hw:
+                self.display_log("ALERTA: Código alterado! Conexão com a FPGA suspensa. Retornando à Simulação.", "error")
+            else:
                 self.display_log("Código editado. Simulação reiniciada automaticamente.", "info")
-            elif self.exec_mode == 'HW':
-                self.display_log("ALERTA: Código alterado! Faça um novo Upload para sincronizar com a FPGA.", "error")
-                self.loaded_code = current_code # Atualiza para não dar spam de erro
                 
-    
+    def cleanup_hardware(self):
+        """Chamado automaticamente ao fechar a aplicação para não deixar a FPGA em estado zumbi."""
+        if self.debug_ser and self.debug_ser.is_open:
+            try:
+                # 1. Assume o controle para garantir que a placa nos ouça
+                self.debug_ser.rts = False
+                time.sleep(0.01)
+                self.debug_ser.write(b'\xCA\xFE\xBA\xBE')
+                time.sleep(0.02)
+                
+                # 2. Remove possíveis break-points pendentes
+                self.debug_ser.write(b'\x06') # CMD_CLR_BKP
+                time.sleep(0.01)
+                
+                # 3. Força a placa a voltar pro Boot ROM (0x000) e dá um Reset
+                self.debug_ser.write(b'\x09\x00\x00\x00\x00')
+                time.sleep(0.01)
+                self.debug_ser.write(b'\x08') # Reset Halt
+                time.sleep(0.01)
+                self.debug_ser.write(b'\x0A') # Limpa Registradores
+                time.sleep(0.01)
+                
+                # 4. DESTRAVA A PLACA: Manda um Resume para ela voltar a operar livremente
+                self.debug_ser.write(b'\x02') # CMD_RESUME
+                time.sleep(0.01)
+                
+                # Libera o barramento e fecha a porta de vez
+                self.debug_ser.rts = True
+                self.debug_ser.close()
+                print("Hardware destravado e conexão limpa com sucesso.")
+            except Exception as e:
+                print(f"Erro na limpeza de saída do hardware: {e}")
