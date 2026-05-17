@@ -109,6 +109,9 @@ class RV32IWidget(QWidget):
         editor_label = QLabel("Código Assembly")
         editor_label.setStyleSheet("font-weight:700; color:#8B9BB4; background-color: transparent;")
         top_editor_layout.addWidget(editor_label)
+        self.mode_indicator = QLabel("⚡ MODO: SIMULAÇÃO LOCAL")
+        self.mode_indicator.setStyleSheet("color: #3b82f6; font-weight: bold; padding-left: 15px; background: transparent;")
+        top_editor_layout.addWidget(self.mode_indicator)
         top_editor_layout.addStretch()
         top_editor_layout.addWidget(self.btn_reset)
         top_editor_layout.addWidget(self.btn_step)
@@ -171,8 +174,8 @@ class RV32IWidget(QWidget):
             
         reg_layout.addWidget(self.reg_table)
         
-        mem_widget = QWidget()
-        mem_layout = QVBoxLayout(mem_widget)
+        self.mem_widget = QWidget() 
+        mem_layout = QVBoxLayout(self.mem_widget)
         mem_layout.setContentsMargins(0,0,0,0)
         mem_title = QLabel("🗄️ Memória RAM (Data)")
         mem_title.setStyleSheet("font-weight:700; color:#8B9BB4; margin-bottom: 5px; margin-top: 10px; background-color: transparent;")
@@ -189,7 +192,7 @@ class RV32IWidget(QWidget):
         mem_layout.addWidget(self.mem_table)
         
         hw_splitter.addWidget(reg_widget)
-        hw_splitter.addWidget(mem_widget)
+        hw_splitter.addWidget(self.mem_widget)
         hw_splitter.setStretchFactor(0, 1) 
         hw_splitter.setStretchFactor(1, 1) 
         
@@ -238,6 +241,17 @@ class RV32IWidget(QWidget):
         
     def clear_log(self):
         self.console.clear()
+        
+    def set_execution_mode(self, mode: str):
+        """Altera os painéis e o indicador visual baseado no modo de execução."""
+        if mode == 'HW':
+            self.mode_indicator.setText("🔥 MODO: FPGA (HARDWARE)")
+            self.mode_indicator.setStyleSheet("color: #ef4444; font-weight: bold; padding-left: 15px; background: transparent;")
+            self.mem_widget.setVisible(False) # Esconde a memória no modo FPGA
+        else:
+            self.mode_indicator.setText("⚡ MODO: SIMULAÇÃO LOCAL")
+            self.mode_indicator.setStyleSheet("color: #3b82f6; font-weight: bold; padding-left: 15px; background: transparent;")
+            self.mem_widget.setVisible(True) # Mostra a memória na simulação
 
     def set_run_state(self, is_running: bool):
         """Altera o texto, ícone e cor do botão para refletir o estado."""
@@ -275,7 +289,7 @@ class RV32IWidget(QWidget):
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
 
-        # Atualiza Registradores com as cores do tema novo
+        # Atualiza Registradores
         for i in range(32):
             current_val = regs[i]
             item = self.reg_table.item(i, 2)
@@ -287,15 +301,9 @@ class RV32IWidget(QWidget):
                 item.setBackground(QColor("transparent"))
                 item.setForeground(QColor("#6CA1A2")) 
 
-        for row in range(self.mem_table.rowCount()):
-            addr_item = self.mem_table.item(row, 0)
-            val_item = self.mem_table.item(row, 1)
-            if addr_item and val_item:
-                addr = int(addr_item.text(), 16)
-                val = memory.get(addr, 0)
-                if int(val_item.text()) != val:
-                    val_item.setText(str(val))
-                    val_item.setForeground(QColor("#DC673E"))
+        # --- CORREÇÃO: CRIA E ATUALIZA A MEMÓRIA RAM DINAMICAMENTE ---
+        for addr, val in memory.items():
+            self.update_memory_view(addr, val)
         
     def show_editor_menu(self, position):
         menu = QMenu()

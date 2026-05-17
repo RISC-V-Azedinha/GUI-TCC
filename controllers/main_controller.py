@@ -114,6 +114,7 @@ class MainController:
         
         # MÁQUINA DE ESTADOS DO CONTROLADOR (A chave para não misturar!)
         self.exec_mode = 'SIM' # Modos: 'SIM' ou 'HW'
+        self.view.set_execution_mode('SIM')
         self.hw_running = False
         
         self.run_timer = QTimer()
@@ -173,7 +174,8 @@ class MainController:
         self.hw_running = False
         self.run_timer.stop()
         self.view.set_run_state(False)
-        
+        self.view.set_execution_mode('SIM')
+
         # Garante que a interface reflita o estado de "sem upload"
         self.view.progressBar.setValue(0)
         
@@ -212,6 +214,7 @@ class MainController:
             
             # Corta a telemetria com o Hardware
             self.exec_mode = 'SIM'
+            self.view.set_execution_mode('SIM')
             self.hw_running = False
             self.run_timer.stop()
             self.view.set_run_state(False)
@@ -272,11 +275,13 @@ class MainController:
             
             # Retorna o estado operacional padrão para o modo de simulação local seguro
             self.exec_mode = 'SIM'
+            self.view.set_execution_mode('SIM')
 
     def on_upload_finished(self, success):
         """Ao terminar de subir código, entramos oficialmente no Modo Hardware!"""
         if success:
             self.exec_mode = 'HW'
+            self.view.set_execution_mode('HW')
             self.hw_running = False
             self._auto_sync() 
 
@@ -302,26 +307,56 @@ class MainController:
         self.fpga_worker.start()
 
     def handle_hw_reset(self):
-        """Se o usuário clicar em Reset, tenta conectar à FPGA. Se falhar, reseta apenas o local."""
-        self.handle_reset(self.view.editor.toPlainText()) 
-        ser = self._get_serial()
-        if ser:
-            self.exec_mode = 'HW'
-            self.hw_running = False
-            self.view.set_run_state(False)
+        """Reseta o estado atual respeitando estritamente o modo de execução ativo (SIM ou HW)."""
+        asm_code = self.view.editor.toPlainText()
+        
+        # ----------------------------------------------------
+        # RESET NO MODO SIMULAÇÃO
+        # ----------------------------------------------------
+        if self.exec_mode == 'SIM':
+            # Reseta o emulador interno e limpa o console
+            self.handle_reset(asm_code)
             
-            ser.rts = False
-            time.sleep(0.02)
-            ser.write(b'\x09\x00\x08\x00\x80') # Boot = RAM
-            time.sleep(0.01)
-            ser.write(b'\x08') # Reset Halt
-            time.sleep(0.01)
-            ser.write(b'\x0A') # Limpa Regs
-            ser.reset_input_buffer()
-            self.display_log("Hardware Resetado (PC = 0x80000800). Modo Placa ativo.", "success")
-            self._auto_sync()
-        else:
-            self.exec_mode = 'SIM'
+            # Garante que a tabela de RAM da simulação seja zerada visualmente
+            self.view.mem_table.setRowCount(0)
+            
+            # Força a interface a se manter no estado visual de simulação
+            self.view.set_execution_mode('SIM')
+            self.view.log(">> Simulação Local Reiniciada.", "#3b82f6")
+
+        # ----------------------------------------------------
+        # RESET NO MODO HARDWARE (FPGA)
+        # ----------------------------------------------------
+        elif self.exec_mode == 'HW':
+            self.handle_reset(asm_code) # Limpa o modelo local de espelho
+            ser = self._get_serial()
+            
+            if ser:
+                self.hw_running = False
+                self.view.set_run_state(False)
+                
+                try:
+                    ser.rts = False
+                    time.sleep(0.02)
+                    ser.write(b'\x09\x00\x08\x00\x80') # Boot = RAM
+                    time.sleep(0.01)
+                    ser.write(b'\x08') # Reset Halt
+                    time.sleep(0.01)
+                    ser.write(b'\x0A') # Limpa Regs
+                    ser.reset_input_buffer()
+                    
+                    self.view.set_execution_mode('HW')
+                    self.display_log("Hardware Resetado (PC = 0x80000800). Modo Placa ativo.", "success")
+                    self._auto_sync()
+                except Exception as e:
+                    self.display_log(f"Erro ao enviar comandos de reset à FPGA: {e}", "error")
+                    # Fallback de segurança caso a comunicação caia no meio do reset
+                    self.exec_mode = 'SIM'
+                    self.view.set_execution_mode('SIM')
+            else:
+                # Se o usuário tentar dar reset em modo HW mas a serial caiu/desconectou
+                self.exec_mode = 'SIM'
+                self.view.set_execution_mode('SIM')
 
     def handle_step(self):
         # ----------------------------------------------------
@@ -429,6 +464,7 @@ class MainController:
             ser = self._get_serial()
             if ser:
                 self.exec_mode = 'HW'
+                self.view.set_execution_mode('HW')
                 was_running = self.hw_running 
                 
                 ser.rts = False
@@ -509,7 +545,8 @@ class MainController:
             # 1. Força a queda imediata para o modo de Simulação e para o hardware
             self.exec_mode = 'SIM'
             self.hw_running = False
-            
+            self.view.set_execution_mode('SIM')
+
             # 2. Zera a barra de progresso visualmente
             self.view.progressBar.setValue(0)
             
@@ -546,9 +583,15 @@ class MainController:
                 
                 # 4. DESTRAVA A PLACA: Manda um Resume para ela voltar a operar livremente
                 self.debug_ser.write(b'\x02') # CMD_RESUME
-                time.sleep(0.01)
                 
-                # Libera o barramento e fecha a porta de vez
+                # ==============================================================
+                # A MÁGICA ESTÁ AQUI:
+                # Força o SO a esvaziar o buffer e garantir que tudo viajou pelo cabo USB.
+                self.debug_ser.flush() 
+                time.sleep(0.05) # Dá um tempinho extra pro chip USB da placa processar
+                # ==============================================================
+                
+                # Libera o barramento e fecha a porta de vez com segurança
                 self.debug_ser.rts = True
                 self.debug_ser.close()
                 print("Hardware destravado e conexão limpa com sucesso.")
