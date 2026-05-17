@@ -67,6 +67,9 @@ def main():
     rv32i_controller = MainController(rv32i_model, main_window.rv32i_view)
     main_window.stacked_widget.currentChanged.connect(rv32i_controller.on_tab_changed)
     
+    rv32i_controller.io_view = main_window.io_view
+    main_window.io_view.request_compile_and_upload.connect(rv32i_controller.handle_io_compile_upload)
+    
     npu_model = NPUModel()
     npu_controller = NPUController(npu_model, main_window.npu_view)
     

@@ -1,4 +1,6 @@
 # controllers/main_controller.py
+import os
+import subprocess
 import re
 import struct
 import serial
@@ -597,3 +599,179 @@ class MainController:
                 print("Hardware destravado e conexão limpa com sucesso.")
             except Exception as e:
                 print(f"Erro na limpeza de saída do hardware: {e}")
+                
+    # ==========================================
+    # C COMPILATION & UPLOAD (LAB 2 - I/O)
+    # ==========================================
+    def handle_io_compile_upload(self, c_code):
+        import os
+        import subprocess
+        import glob
+        
+        ser = self._get_serial()
+        if not ser:
+            if hasattr(self, 'io_view'):
+                self.io_view.log("[ERRO] FPGA Desconectada. Verifique a aba Config.", "#ef4444")
+                self._reset_io_ui_state()
+            return
+
+        # 1. PREPARA OS DIRETÓRIOS E ARQUIVOS
+        app_name = "gui_io_temp"
+        build_dir = os.path.join("build", "fpga", "bin")
+        os.makedirs(build_dir, exist_ok=True)
+
+        c_file_path = os.path.join(build_dir, f"{app_name}.c")
+        elf_path = os.path.join(build_dir, f"{app_name}.elf")
+        bin_path = os.path.join(build_dir, f"{app_name}.bin")
+
+        try:
+            with open(c_file_path, "w", encoding="utf-8") as f:
+                f.write(c_code)
+        except Exception as e:
+            if hasattr(self, 'io_view'):
+                self.io_view.log(f"[ERRO] Falha ao salvar arquivo temporário: {e}", "#ef4444")
+                self._reset_io_ui_state()
+            return
+
+        # 2. RESOLVE OS CAMINHOS DO TOOLCHAIN EMBUTIDO
+        # Assume que o toolchain está na pasta 'toolchain/bin' na raiz da sua aplicação
+        ext = ".exe" if os.name == 'nt' else ""
+        gcc_bin = os.path.join("toolchain", "bin", f"riscv64-unknown-elf-gcc{ext}")
+        objcopy_bin = os.path.join("toolchain", "bin", f"riscv64-unknown-elf-objcopy{ext}")
+
+        # Fallback de segurança: se não achar a pasta 'toolchain' local, tenta usar a variável global (PATH)
+        if not os.path.exists(gcc_bin):
+            gcc_bin = f"riscv64-unknown-elf-gcc{ext}"
+            objcopy_bin = f"riscv64-unknown-elf-objcopy{ext}"
+
+        # Arquivos de suporte baseados na sua estrutura do Makefile
+        bsp_dir = os.path.join("artefacts", "bsp")
+        linker_script = os.path.join("artefacts", "link.ld")
+        startup_s = os.path.join("artefacts", "start.s")
+        bsp_sources = glob.glob(os.path.join(bsp_dir, "*.c"))
+
+        if not os.path.exists(startup_s) or not os.path.exists(linker_script):
+            if hasattr(self, 'io_view'):
+                self.io_view.log("[ERRO FATAL] Arquivos base 'start.s' ou 'link.ld' não encontrados na pasta 'artefacts/'.", "#ef4444")
+                self._reset_io_ui_state()
+            return
+
+        # 3. ETAPA DE COMPILAÇÃO (GCC)
+        if hasattr(self, 'io_view'):
+            self.io_view.log(">> Compilando código fonte via RISC-V GCC...", "#38bdf8")
+            
+        gcc_cmd = [
+            gcc_bin,
+            "-march=rv32i", "-mabi=ilp32", "-nostdlib", "-nostartfiles", "-g", "--specs=picolibc.specs",
+            f"-I{bsp_dir}",
+            "-T", linker_script,
+            "-o", elf_path,
+            startup_s,
+            *bsp_sources,
+            c_file_path
+        ]
+
+        try:
+            result_gcc = subprocess.run(gcc_cmd, capture_output=True, text=True)
+            if result_gcc.returncode != 0:
+                if hasattr(self, 'io_view'):
+                    self.io_view.log(f"[ERRO DE COMPILAÇÃO C]\n{result_gcc.stderr}", "#ef4444")
+                    self._reset_io_ui_state()
+                return
+        except FileNotFoundError:
+            if hasattr(self, 'io_view'):
+                self.io_view.log("[ERRO FATAL] RISC-V Toolchain não encontrado! Verifique a pasta 'toolchain/bin'.", "#ef4444")
+                self._reset_io_ui_state()
+            return
+        except Exception as e:
+            if hasattr(self, 'io_view'):
+                self.io_view.log(f"[ERRO FATAL] {e}", "#ef4444")
+                self._reset_io_ui_state()
+            return
+
+        # 4. ETAPA DE EXTRAÇÃO DO BINÁRIO (OBJCOPY)
+        if hasattr(self, 'io_view'):
+            self.io_view.log(">> Linkagem concluída. Extraindo arquivo .bin...", "#e2e8f0")
+            
+        objcopy_cmd = [
+            objcopy_bin,
+            "-O", "binary",
+            elf_path,
+            bin_path
+        ]
+
+        try:
+            result_obj = subprocess.run(objcopy_cmd, capture_output=True, text=True)
+            if result_obj.returncode != 0:
+                if hasattr(self, 'io_view'):
+                    self.io_view.log(f"[ERRO NO OBJCOPY]\n{result_obj.stderr}", "#ef4444")
+                    self._reset_io_ui_state()
+                return
+        except Exception as e:
+            if hasattr(self, 'io_view'):
+                self.io_view.log(f"[ERRO FATAL] {e}", "#ef4444")
+                self._reset_io_ui_state()
+            return
+
+        # 5. CARREGA O BINÁRIO FINAL PARA O UPLOAD
+        if not os.path.exists(bin_path):
+            if hasattr(self, 'io_view'):
+                self.io_view.log("[ERRO] O arquivo .bin não foi gerado pelo Objcopy.", "#ef4444")
+                self._reset_io_ui_state()
+            return
+
+        with open(bin_path, "rb") as f:
+            binary_payload = f.read()
+
+        if hasattr(self, 'io_view'):
+            size_kb = len(binary_payload) / 1024
+            self.io_view.log(f">> Sucesso! Binário gerado: {size_kb:.2f} KB. Iniciando Upload Serial...", "#10b981")
+            self.io_view.btn_upload.setText(" Flashing...")
+            
+            # Reconecta os sinais para a Aba de I/O
+            self.fpga_worker.progress_update.disconnect()
+            try: self.fpga_worker.finished.disconnect(self.on_upload_finished)
+            except: pass
+            
+            self.fpga_worker.progress_update.connect(self.io_view.progressBar.setValue)
+            self.fpga_worker.finished.connect(self.on_io_upload_finished)
+
+        self.fpga_worker.set_payload(binary_payload, ser)
+        self.fpga_worker.start()
+        
+    def _reset_io_ui_state(self):
+        """Função auxiliar para destravar a interface se algo der errado no upload/compilação do Lab 2."""
+        if hasattr(self, 'io_view'):
+            self.io_view.btn_upload.setEnabled(True)
+            self.io_view.btn_upload.setText(" Compile & Flash FPGA")
+            self.io_view.progressBar.hide()
+            
+    def on_io_upload_finished(self, success):
+        """Callback após a FPGA receber o kernel compilado."""
+        if hasattr(self, 'io_view'):
+            self._reset_io_ui_state()
+            if success:
+                self.io_view.log(">> Flash concluído! FPGA rodando o driver em C.", "#10b981")
+                self.exec_mode = 'HW'
+                self.hw_running = True
+                
+                # ==============================================================
+                # SOLUÇÃO: Libera a FPGA do estado de Halt gerado pelo FPGALoader
+                # ==============================================================
+                ser = self._get_serial()
+                if ser:
+                    ser.write(b'\x02') # CMD_RESUME (Dá o "Play" no processador)
+                    time.sleep(0.01)
+                    ser.rts = True     # Libera o controle do barramento de Debug
+                # ==============================================================
+                
+            else:
+                self.io_view.log("[ERRO] Falha na comunicação com a FPGA durante o envio.", "#ef4444")
+            
+            # Desfaz conexões temporárias
+            self.fpga_worker.progress_update.disconnect(self.io_view.progressBar.setValue)
+            self.fpga_worker.finished.disconnect(self.on_io_upload_finished)
+            
+            # Reconecta na Aba 1 para quando o usuário voltar para lá
+            self.fpga_worker.progress_update.connect(self.view.progressBar.setValue)
+            self.fpga_worker.finished.connect(self.on_upload_finished)
