@@ -2,7 +2,7 @@
 import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QFrame, QStackedWidget, QDialog,
-                             QFileDialog)
+                             QFileDialog, QScrollArea)
 from PyQt5.QtCore import QSize, QUrl, QTimer
 from PyQt5.QtGui import QDesktopServices
 from core.connection_manager import ConnectionManager
@@ -17,6 +17,25 @@ from .tabs.io_widget import IOWidget
 from .tabs.dma_widget import DMAWidget 
 from .tabs.tiling_widget import TilingWidget
 from .tabs.nn_widget import NNWidget
+
+# ==========================================
+# ÁREA DE ROLAGEM DOS LABORATÓRIOS
+# ==========================================
+class LabScrollArea(QScrollArea):
+    """Área de rolagem que pede o tamanho do laboratório, mas aceita ficar menor que ele.
+
+    O sizeHint padrão de uma QScrollArea é um retângulo genérico pequeno, e a janela abriria
+    encolhida (com barras de rolagem) mesmo em telas grandes. Aqui o tamanho *preferido* é o do
+    laboratório; o *mínimo* continua pequeno, que é o que permite a janela caber em telas menores.
+    """
+
+    def sizeHint(self):
+        widget = self.widget()
+        if widget is None:
+            return super().sizeHint()
+        margin = 2 * self.frameWidth()
+        return widget.sizeHint() + QSize(margin, margin)
+
 
 # ==========================================
 # JANELA PRINCIPAL DA APLICAÇÃO
@@ -204,7 +223,17 @@ class RiscVEduApp(QMainWindow):
         self.stacked_widget.addWidget(self.tiling_view)     # Índice 5
         self.stacked_widget.addWidget(self.nn_view)         # Índice 6
         
-        layout.addWidget(self.stacked_widget)
+        # Os laboratórios pedem ~1540x930 px lógicos. Em telas menores, sem a área de rolagem
+        # o layout espreme os painéis abaixo do mínimo e a interface sai desfigurada (rótulos
+        # cortados no meio da letra, botões sem texto, seções que somem). Rolando, cada painel
+        # mantém o tamanho em que foi desenhado.
+        self.lab_scroll = LabScrollArea()
+        self.lab_scroll.setObjectName("LabScroll")
+        self.lab_scroll.setFrameShape(QFrame.NoFrame)
+        self.lab_scroll.setWidgetResizable(True)
+        self.lab_scroll.setWidget(self.stacked_widget)
+
+        layout.addWidget(self.lab_scroll)
         self.main_layout.addWidget(self.main_content)
         
         self.switch_lab(0, self.nav_buttons[0])
