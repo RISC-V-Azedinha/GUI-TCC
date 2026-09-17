@@ -29,6 +29,12 @@ class LabScrollArea(QScrollArea):
     laboratório; o *mínimo* continua pequeno, que é o que permite a janela caber em telas menores.
     """
 
+    def __init__(self):
+        super().__init__()
+        # Estilizadas em ui/styles.py sem afetar as barras dos painéis de dentro do laboratório.
+        for bar in (self.verticalScrollBar(), self.horizontalScrollBar()):
+            bar.setObjectName("LabScrollBar")
+
     def sizeHint(self):
         widget = self.widget()
         if widget is None:

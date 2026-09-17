@@ -242,6 +242,33 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     width: 0px;
 }
 
+/* Barras de rolagem da área dos laboratórios (aparecem só em telas menores que o
+   laboratório). Discretas de propósito: elas cruzam a janela inteira e, na cor mostarda
+   das barras dos painéis, pareceriam parte do conteúdo. O seletor é pelo objectName da
+   própria barra (ver LabScrollArea): "#LabScroll QScrollBar" pegaria também as barras
+   dos painéis de dentro do laboratório. */
+QScrollBar#LabScrollBar:vertical {
+    background: #12141A;
+    border: none;
+    border-left: 1px solid #2A2F3A;
+    width: 10px;
+}
+QScrollBar#LabScrollBar:horizontal {
+    background: #12141A;
+    border: none;
+    border-top: 1px solid #2A2F3A;
+    height: 10px;
+}
+QScrollBar#LabScrollBar::handle:vertical,
+QScrollBar#LabScrollBar::handle:horizontal {
+    background: #2A2F3A;
+    border-radius: 0px;
+}
+QScrollBar#LabScrollBar::handle:vertical:hover,
+QScrollBar#LabScrollBar::handle:horizontal:hover {
+    background: #F2B845;
+}
+
 /* ================== IO WIDGET ================== */
 #IOCodePanel, #IOMapPanel, #IOBoardPanel {
     background-color: #0B0D12;
