@@ -173,8 +173,8 @@ class NNWidget(QWidget):
         self.setStyleSheet(f"background-color: {BG_MAIN};")
         
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(40, 30, 40, 20)
-        main_layout.setSpacing(25)
+        main_layout.setContentsMargins(24, 16, 24, 16)
+        main_layout.setSpacing(16)
 
         # =========================================================
         # CABEÇALHO COM CONTROLES DA FPGA E LOADING
@@ -231,7 +231,7 @@ class NNWidget(QWidget):
         # ÁREA CENTRAL
         # =========================================================
         workspace = QHBoxLayout()
-        workspace.setSpacing(40)
+        workspace.setSpacing(28)
 
         # --- PAINEL ESQUERDO ---
         self.left_panel = QFrame()
@@ -241,8 +241,8 @@ class NNWidget(QWidget):
         
         l_layout = QVBoxLayout(self.left_panel)
         l_layout.setAlignment(Qt.AlignCenter)
-        l_layout.setSpacing(20)
-        l_layout.setContentsMargins(30, 30, 30, 30)
+        l_layout.setSpacing(14)
+        l_layout.setContentsMargins(20, 18, 20, 18)
 
         draw_header_layout = QHBoxLayout()
         draw_header_layout.setAlignment(Qt.AlignCenter)
@@ -267,7 +267,7 @@ class NNWidget(QWidget):
 
         self.btn_clear = QPushButton(" LIMPAR LOUSA")
         self.btn_clear.setIcon(qta.icon('fa5s.eraser', color=NEON_PURPLE))
-        self.btn_clear.setFixedSize(420, 48)
+        self.btn_clear.setFixedSize(420, 40)
         self.btn_clear.setStyleSheet(f"""
             QPushButton {{ background-color: {hex_to_rgba(NEON_PURPLE, 0.1)}; color: {NEON_PURPLE}; border: 1px solid {hex_to_rgba(NEON_PURPLE, 0.3)}; border-radius: 6px; font-size: 13px; font-weight: bold; letter-spacing: 1px; }}
             QPushButton:hover {{ background-color: {hex_to_rgba(NEON_PURPLE, 0.2)}; border: 1px solid {NEON_PURPLE}; }}
@@ -286,11 +286,11 @@ class NNWidget(QWidget):
         add_neon_glow(self.right_panel, hex_to_rgba(NEON_CYAN, 0.1), 40)
         
         r_layout = QVBoxLayout(self.right_panel)
-        r_layout.setContentsMargins(40, 30, 40, 30)
-        r_layout.setSpacing(25)
+        r_layout.setContentsMargins(24, 18, 24, 18)
+        r_layout.setSpacing(16)
 
         top_r_layout = QHBoxLayout()
-        top_r_layout.setSpacing(30)
+        top_r_layout.setSpacing(20)
         top_r_layout.setAlignment(Qt.AlignCenter)
 
         npu_view_container = QVBoxLayout()
@@ -301,7 +301,7 @@ class NNWidget(QWidget):
         npu_view_container.addWidget(lbl_npu_in)
 
         self.lbl_npu_preview = QLabel()
-        self.lbl_npu_preview.setFixedSize(140, 140) 
+        self.lbl_npu_preview.setFixedSize(120, 120)
         self.lbl_npu_preview.setObjectName("PreviewNPU")
         self.lbl_npu_preview.setStyleSheet(f"#PreviewNPU {{ background-color: {BG_ELEMENT}; border: 1px solid {BORDER}; border-radius: 8px; }}")
         self.lbl_npu_preview.setAlignment(Qt.AlignCenter)
@@ -324,7 +324,7 @@ class NNWidget(QWidget):
         r_layout.addWidget(line)
 
         bottom_h_layout = QHBoxLayout()
-        bottom_h_layout.setSpacing(40)
+        bottom_h_layout.setSpacing(28)
 
         # Círculo de Previsão
         pred_layout = QVBoxLayout()
@@ -333,10 +333,10 @@ class NNWidget(QWidget):
         lbl_pred_title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; font-weight: 700; background: transparent;")
         lbl_pred_title.setAlignment(Qt.AlignCenter)
         pred_layout.addWidget(lbl_pred_title)
-        pred_layout.addSpacing(15)
+        pred_layout.addSpacing(10)
 
         self.pred_circle = QFrame()
-        self.pred_circle.setFixedSize(140, 140)
+        self.pred_circle.setFixedSize(120, 120)
         self.pred_circle.setStyleSheet(f"background-color: {hex_to_rgba(BORDER, 0.2)}; border: 3px solid {BORDER}; border-radius: 70px;")
         circle_layout = QVBoxLayout(self.pred_circle)
         self.lbl_prediction = QLabel("?")
@@ -354,7 +354,7 @@ class NNWidget(QWidget):
         lbl_conf_title.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; font-weight: 700; background: transparent;")
         lbl_conf_title.setAlignment(Qt.AlignCenter)
         bars_layout.addWidget(lbl_conf_title)
-        bars_layout.addSpacing(15)
+        bars_layout.addSpacing(10)
 
         conf_container = QWidget()
         conf_container.setStyleSheet("background: transparent;")

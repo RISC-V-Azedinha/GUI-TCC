@@ -9,6 +9,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QTextFormat, QTextCursor
 import qtawesome as qta
 
+from ..components.elided_label import ElidedLabel
 from ..components.highlighter import RISCVHighlighter
 from artifacts import sample_code
 
@@ -29,8 +30,8 @@ class RV32IWidget(QWidget):
     def __init__(self):
         super().__init__()
         w_layout = QVBoxLayout(self)
-        w_layout.setContentsMargins(30, 20, 30, 30)
-        w_layout.setSpacing(20)
+        w_layout.setContentsMargins(20, 16, 20, 20)
+        w_layout.setSpacing(16)
         
         # 1. Pipeline
         pipeline_frame = QFrame()
@@ -102,6 +103,7 @@ class RV32IWidget(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         
         top_editor_layout = QHBoxLayout()
+        top_editor_layout.setSpacing(4)
         editor_icon = QLabel()
         editor_icon.setPixmap(qta.icon('fa5s.file-code', color='#8B9BB4').pixmap(16, 16))
         top_editor_layout.addWidget(editor_icon)
@@ -110,7 +112,7 @@ class RV32IWidget(QWidget):
         editor_label.setStyleSheet("font-weight:700; color:#8B9BB4; background-color: transparent;")
         top_editor_layout.addWidget(editor_label)
         self.mode_indicator = QLabel("MODO: SIMULAÇÃO LOCAL")
-        self.mode_indicator.setStyleSheet("color: #3b82f6; font-weight: bold; padding-left: 15px; background: transparent;")
+        self.mode_indicator.setStyleSheet("color: #3b82f6; font-weight: bold; padding-left: 8px; background: transparent;")
         top_editor_layout.addWidget(self.mode_indicator)
         top_editor_layout.addStretch()
         top_editor_layout.addWidget(self.btn_reset)
@@ -232,7 +234,7 @@ class RV32IWidget(QWidget):
         icon = QLabel()
         icon.setPixmap(qta.icon(icon_name, color='#8B9BB4').pixmap(14, 14))
         icon.setStyleSheet("background-color: transparent;")
-        label = QLabel(text)
+        label = ElidedLabel(text)
         label.setStyleSheet("font-weight:700; color:#8B9BB4; background-color: transparent;")
         layout.addWidget(icon)
         layout.addWidget(label)
@@ -257,11 +259,11 @@ class RV32IWidget(QWidget):
         """Altera os painéis e o indicador visual baseado no modo de execução."""
         if mode == 'HW':
             self.mode_indicator.setText("MODO: FPGA (HARDWARE)")
-            self.mode_indicator.setStyleSheet("color: #ef4444; font-weight: bold; padding-left: 15px; background: transparent;")
+            self.mode_indicator.setStyleSheet("color: #ef4444; font-weight: bold; padding-left: 8px; background: transparent;")
             self.mem_widget.setVisible(False) # Esconde a memória no modo FPGA
         else:
             self.mode_indicator.setText("MODO: SIMULAÇÃO LOCAL")
-            self.mode_indicator.setStyleSheet("color: #3b82f6; font-weight: bold; padding-left: 15px; background: transparent;")
+            self.mode_indicator.setStyleSheet("color: #3b82f6; font-weight: bold; padding-left: 8px; background: transparent;")
             self.mem_widget.setVisible(True) # Mostra a memória na simulação
 
     def set_run_state(self, is_running: bool):

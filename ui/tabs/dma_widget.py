@@ -96,6 +96,8 @@ class BlockWidget(QFrame):
         
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
+        # O título ("DMA Controller") não cabia na caixa de 120 px e saía cortado no meio da palavra.
+        layout.setContentsMargins(6, 6, 6, 6)
         
         self.ctrl_lbl = QLabel("")
         self.ctrl_lbl.setStyleSheet(f"color: {MUSTARD}; font-size: 10px; font-weight: bold; border: none;")
@@ -108,7 +110,7 @@ class BlockWidget(QFrame):
         self.icon_lbl.setStyleSheet("border: none;")
         
         self.title_lbl = QLabel(title)
-        self.title_lbl.setStyleSheet(f"color: {color}; font-weight: bold; border: none;")
+        self.title_lbl.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: bold; border: none;")
         self.title_lbl.setAlignment(Qt.AlignCenter)
         
         layout.addWidget(self.ctrl_lbl)
@@ -122,7 +124,7 @@ class BlockWidget(QFrame):
         
         self.setStyleSheet(f"background-color: {bg}; border: 2px solid {color}; border-radius: 8px;")
         self.icon_lbl.setPixmap(qta.icon(self.icon_name, color=color).pixmap(32, 32))
-        self.title_lbl.setStyleSheet(f"color: {color}; font-weight: bold; border: none;")
+        self.title_lbl.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: bold; border: none;")
 
     def set_control_signal(self, text):
         self.ctrl_lbl.setText(text)

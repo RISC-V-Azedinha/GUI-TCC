@@ -130,7 +130,7 @@ QPushButton.ActionBtn {
     color: #E2E8F0;
     border: 1px solid #2A2F3A;
     border-radius: 4px;
-    padding: 6px 16px;
+    padding: 6px 12px;
     font-weight: bold;
 }
 QPushButton.ActionBtn:hover { background-color: #2A2F3A; border-color: #6CA1A2; }
@@ -143,9 +143,9 @@ QPushButton.PrimaryBtn {
     color: #12141A; 
     border: none; 
     border-radius: 4px; 
-    padding: 6px 16px;
+    padding: 6px 12px;
     font-weight: bold;
-    min-width: 100px; 
+    min-width: 80px; 
 }
 QPushButton.PrimaryBtn:hover { background-color: #E75122; }
 
@@ -154,7 +154,7 @@ QPushButton.SuccessBtn {
     color: #12141A; 
     border: none; 
     border-radius: 4px;
-    padding: 6px 16px;
+    padding: 6px 12px;
     font-weight: bold;
 }
 QPushButton.SuccessBtn:hover { background-color: #4A9C5E; }

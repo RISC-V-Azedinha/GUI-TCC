@@ -34,7 +34,7 @@ class PPUToggle(QFrame):
     def __init__(self, text, active=False):
         super().__init__()
         self.active = active
-        self.setFixedHeight(40)
+        self.setFixedHeight(36)
         self.setCursor(Qt.PointingHandCursor)
         
         layout = QHBoxLayout(self)
@@ -76,10 +76,11 @@ class PEWidget(QFrame):
             #PEBox {{ border: 2px solid {TEAL}; border-radius: 8px; background-color: {TEAL_DIM}; }}
             #PEBoxDone {{ border: 2px solid {GREEN}; border-radius: 8px; background-color: {GREEN_DIM}; }}
         """)
-        self.setFixedSize(120, 120) 
+        self.setFixedSize(96, 96)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(2)
         
         h_layout = QHBoxLayout()
         lbl_name = QLabel(f"PE_{r}{c}")
@@ -97,7 +98,7 @@ class PEWidget(QFrame):
         layout.addWidget(self.lbl_mac)
         
         self.lbl_acc = QLabel("0")
-        self.lbl_acc.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 28px; font-weight: bold; border: none;")
+        self.lbl_acc.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 22px; font-weight: bold; border: none;")
         self.lbl_acc.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.lbl_acc)
         
@@ -111,12 +112,12 @@ class PEWidget(QFrame):
         self.lbl_acc.setText(str(acc))
         if done:
             self.lbl_status.setText("DONE")
-            self.lbl_acc.setStyleSheet(f"color: {GREEN}; font-size: 28px; font-weight: bold; border: none;")
+            self.lbl_acc.setStyleSheet(f"color: {GREEN}; font-size: 22px; font-weight: bold; border: none;")
             self.progress.setStyleSheet(f"background-color: {GREEN}; border-radius: 2px;")
             self.setObjectName("PEBoxDone")
         else:
             self.lbl_status.setText("")
-            self.lbl_acc.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 28px; font-weight: bold; border: none;")
+            self.lbl_acc.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 22px; font-weight: bold; border: none;")
             self.progress.setStyleSheet(f"background-color: {TEAL}; border-radius: 2px;")
             self.setObjectName("PEBox")
             
@@ -131,7 +132,7 @@ class NPUWidget(QWidget):
     def __init__(self):
         super().__init__()
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setContentsMargins(16, 14, 16, 14)
         
         # CABEÇALHO DA NPU
         header = QHBoxLayout()
@@ -180,11 +181,11 @@ class NPUWidget(QWidget):
         header.addWidget(self.btn_step)
         header.addWidget(self.btn_run)
         main_layout.addLayout(header)
-        main_layout.addSpacing(20)
+        main_layout.addSpacing(12)
         
         # GRID PRINCIPAL E ALINHAMENTO
         panels_grid = QGridLayout()
-        panels_grid.setSpacing(30) 
+        panels_grid.setSpacing(16)
         
         frame_input, self.panel_input = self._create_panel("INPUT MEMORY (A)")
         frame_weight, self.panel_weight = self._create_panel("WEIGHT MEMORY (B)")
@@ -201,7 +202,7 @@ class NPUWidget(QWidget):
         # PAINEL DIREITO CORRIGIDO
         col_right = QVBoxLayout()
         col_right.setContentsMargins(0, 0, 0, 0)
-        col_right.setSpacing(20) # Espaço entre Output e PPU
+        col_right.setSpacing(14) # Espaço entre Output e PPU
         
         frame_output, self.panel_output = self._create_panel("OUTPUT MEMORY (C)")
         frame_output.setFixedWidth(280)
@@ -253,7 +254,7 @@ class NPUWidget(QWidget):
         frame = QFrame()
         frame.setStyleSheet(f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 8px;")
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setContentsMargins(12, 12, 12, 12)
         
         lbl = QLabel(title)
         lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: bold; font-size: 12px; border: none; margin-bottom: 5px;")
@@ -265,8 +266,8 @@ class NPUWidget(QWidget):
         return frame, content
 
     def setup_grids(self):
-        CELL_SIZE = 120
-        SPACING = 20
+        CELL_SIZE = 96
+        SPACING = 14
 
         self.grid_core.setSpacing(SPACING)
         self.grid_input.setVerticalSpacing(SPACING)
@@ -288,7 +289,7 @@ class NPUWidget(QWidget):
             for c in range(3):
                 le = self.a_inputs[r][c]
                 le.setValidator(QIntValidator(-999, 999))
-                le.setFixedSize(45, 45) 
+                le.setFixedSize(42, 42)
                 le.setAlignment(Qt.AlignCenter)
                 le.setText(str(r * 3 + c + 1))
                 self.grid_input.addWidget(le, r, c + 1, Qt.AlignCenter)
@@ -303,7 +304,7 @@ class NPUWidget(QWidget):
             for r in range(3):
                 le = self.b_inputs[r][c]
                 le.setValidator(QIntValidator(-999, 999))
-                le.setFixedSize(45, 40)
+                le.setFixedSize(42, 36)
                 le.setAlignment(Qt.AlignCenter)
                 le.setText("1" if r == c else "0")
                 self.grid_weight.addWidget(le, r, c, Qt.AlignCenter)
@@ -323,7 +324,7 @@ class NPUWidget(QWidget):
         for r in range(3):
             for c in range(3):
                 lbl = self.output_lbls[r][c]
-                lbl.setFixedSize(70, 50)
+                lbl.setFixedSize(64, 44)
                 lbl.setAlignment(Qt.AlignCenter)
                 lbl.setStyleSheet(f"background-color: {GREEN_DIM}; color: {GREEN}; border: 1px solid {GREEN}; border-radius: 6px; font-weight: bold; font-size: 18px;")
                 self.grid_output.addWidget(lbl, r, c)
