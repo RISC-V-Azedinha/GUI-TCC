@@ -156,6 +156,13 @@ void uart_puts(const char *s) {
     while (*s) uart_putc(*s++);
 }
 
+void print_dec(uint32_t n) {
+    char buf[10];
+    int i = 0;
+    do { buf[i++] = '0' + n % 10; n /= 10; } while (n);
+    while (i) uart_putc(buf[--i]);
+}
+
 void delay(uint32_t n) {
     for (volatile uint32_t i = 0; i < n; i++);
 }
@@ -171,7 +178,7 @@ void main() {
 
     hal_gpio_set_dir(GPIO_JA, 0, GPIO_OUTPUT);       // como num microcontrolador:
                                                      // porta, pino e direção
-    uart_puts("\n\r FIBONACCI: LEDs, display e LED RGB\n\r");
+    uart_puts("\n\r FIBONACCI: console, LEDs, display e LED RGB\n\r");
 
     while (1) {
         if (hal_gpio_read(GPIO_SW, 0)) continue;     // SW0 ligada: pausa
@@ -181,6 +188,8 @@ void main() {
             uart_puts(" reinicio\n\r");
         }
 
+        uart_puts(" T"); print_dec(n);               // console: termo em decimal
+        uart_puts(": "); print_dec(t2); uart_puts("\n\r");
         hal_leds_write(t2 & 0xFFFF);                 // LEDs: termo em binário
         hal_seg7_write_dec(t2);                      // display: termo em decimal
         hal_rgb_set(RGB_LD16, (n & 1) ? 255 : 0, (n & 2) ? 255 : 0, (n & 4) ? 255 : 0);
