@@ -46,7 +46,11 @@ def find_toolchain():
 
 
 def gcc_command(gcc: str, libc_flags: list, elf_path: str, c_file: str) -> list:
-    """Linha de comando que compila e liga o firmware do Lab 2 (start.s + BSP + código do aluno)."""
+    """Linha de comando que compila e liga o firmware do Lab 2 (start.s + BSP + código do aluno).
+
+    O BSP (artifacts/bsp) traz o mapa de memória, a HAL de GPIO (hal/hal_gpio.h) e a divisão em
+    software (math_ops.c), já que o RV32I não tem instrução de divisão.
+    """
     bsp_dir = artifact_path("bsp")
     return [
         gcc,
@@ -55,7 +59,7 @@ def gcc_command(gcc: str, libc_flags: list, elf_path: str, c_file: str) -> list:
         "-T", artifact_path("link.ld"),
         "-o", elf_path,
         artifact_path("start.s"),
-        *glob.glob(os.path.join(bsp_dir, "*.c")),
+        *glob.glob(os.path.join(bsp_dir, "**", "*.c"), recursive=True),
         c_file,
     ]
 

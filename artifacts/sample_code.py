@@ -6,7 +6,7 @@ code="""
 .global _start
 
 _start:
-    lui s0, 0x20000      # s0 = 0x20000000 (Endereço base do GPIO / LEDs)
+    lui s0, 0x20000      # s0 = 0x20000000 (Endereço base do GPIO)
     li s1, 46            # s1 = 46 (Limite de iterações do Fibonacci)
     lui s2, 0x00400      # s2 = Aprox. 4 milhões (Limite do Busy Wait Loop)
 
@@ -16,7 +16,7 @@ main_loop:
     li t2, 1             # Contador da iteração
 
 fib_loop:
-    sw t0, 0(s0)         # MMIO: Acende os LEDs com o valor de Fibonacci
+    sw t0, 0x104(s0)     # MMIO: porta de LEDs, registrador OUT (0x2000_0104)
 
     add t4, t0, t1       # Calcula próximo
     mv t0, t1            # Atualiza termo atual
