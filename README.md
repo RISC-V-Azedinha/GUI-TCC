@@ -33,6 +33,8 @@ GUI-TCC/
 
 A versão pronta para Windows está na página de [Releases](https://github.com/RISC-V-Azedinha/GUI-TCC/releases): baixe o `GUI-TCC-windows-x64.zip`, extraia e execute `GUI-TCC.exe` (não é preciso instalar Python).
 
+> ⚠️ O firmware da aba de redes neurais (`artifacts/cnn_server.bin`) usa os descritores de camada e os demais recursos da NPU do SoC RISC-V **v1.2.0 ou posterior**. Grave na FPGA o bitstream dessa versão ([releases do RISC-V](https://github.com/RISC-V-Azedinha/RISC-V/releases)); com um bitstream anterior, a inferência não responde.
+
 O executável já inclui o GCC RISC-V (xPack `riscv-none-elf-gcc`) usado pela aba **I/O**; ele é adicionado ao `PATH` da aplicação automaticamente, sem instalação extra.
 
 Rodando pelo código-fonte, a aba **I/O** usa o toolchain do sistema (`riscv64-unknown-elf-gcc`, ex.: pacotes `gcc-riscv64-unknown-elf` e `picolibc-riscv64-unknown-elf` no Ubuntu) ou uma cópia local baixada com:
